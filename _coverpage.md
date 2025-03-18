@@ -1,7 +1,9 @@
-# Go
+# <b><i>ZhaoSongGo's Blog </i></b>:ant:
 
-[编译原理](compile/)
-[算法刷题](algorithm/)
-[架构设计](arc/)
-[操作系统](os/)
-[杂七杂八](others/)
+[Chromium](chromium/)
+[AOSP](aosp/)
+[Algorithm](algorithm/)
+[Design](arc/)
+[X-System](os/)
+[Lynx](lynx/)
+[Others](others/)
