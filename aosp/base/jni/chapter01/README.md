@@ -91,7 +91,7 @@ clang -fpic -I"$JAVA_HOME/include" -I"$JAVA_HOME/include/darwin" -shared -o libh
 # -Djava.library.path 声明我们的 c 库所在路径
 java Hello -Djava.library.path=.
 ```
-![执行输出](resources/jni_1.png)
+![执行输出](../resources/jni_1.png)
 
 ## jni 动态注册
 上面的 demo 展示的是 jni 提供的静态注册示例，其实 jni 还提供了动态注册机制。允许我们更灵活的将 jni 方法与 c 方法进行绑定，稍后你会看到动态注册带来的灵活性。
@@ -146,7 +146,7 @@ JNI_OnLoad(JavaVM *vm, void *reserved) {
 
 ```
 
-![执行输出](resources/jni_2.png)
+![执行输出](../resources/jni_2.png)
 
 
 
