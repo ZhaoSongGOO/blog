@@ -6,4 +6,5 @@
 [Design](arc/)
 [X-System](os/)
 [Lynx](lynx/)
+[Languages](languages/)
 [Others](others/)
