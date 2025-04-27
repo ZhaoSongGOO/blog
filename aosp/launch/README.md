@@ -234,3 +234,356 @@ exec 重新运行 init 进程，进入下一阶段 `selinux_setup`
     return 1;
 ```
 
+### 阶段2: SetupSelinux
+
+SetupSelinux 这个管线中主要流程如下：
+
+1. 先调用 `InitKernelLogging(argv)` 初始化内核日志，再调用 `InstallRebootSignalHandlers()` 注册需要处理的信号，这个和第一阶段是一样的
+> 为什么还需要重新注册呢？ 因为 `exec` 函数会把整个用户空间进行替换，所以原来的 `handler` 都不存在了，所以也不会继承。
+2. 接着调用 `SelinuxSetupKernelLogging()` 将 `selinux` 日志重定向到内核
+3. 接着调用 `SelinuxInitialize` 加载 `selinux_policy` 策略文件，设置默认 `selinux` 模式
+
+```c
+void SelinuxInitialize() {
+    Timer t;
+
+    LOG(INFO) << "Loading SELinux policy";
+    // 加载 selinux_policy 策略文件
+    if (!LoadPolicy()) {
+        LOG(FATAL) << "Unable to load SELinux policy";
+    }
+
+    bool kernel_enforcing = (security_getenforce() == 1);
+    bool is_enforcing = IsEnforcing();
+    if (kernel_enforcing != is_enforcing) {
+        // 设置默认 selinux 模式
+        if (security_setenforce(is_enforcing)) { 
+            PLOG(FATAL) << "security_setenforce(%s) failed" << (is_enforcing ? "true" : "false");
+        }
+    }
+
+    if (auto result = WriteFile("/sys/fs/selinux/checkreqprot", "0"); !result) {
+        LOG(FATAL) << "Unable to write to /sys/fs/selinux/checkreqprot: " << result.error();
+    }
+
+    // init's first stage can't set properties, so pass the time to the second stage.
+    setenv("INIT_SELINUX_TOOK", std::to_string(t.duration().count()).c_str(), 1);
+}
+```
+
+4. 最后调用 `selinux_android_restorecon` 来设置 `init` 的安全上下问，接着通过 `execv` 跳转到第二阶段
+
+```c
+const char* path = "/system/bin/init";
+const char* args[] = {path, "second_stage", nullptr};
+execv(path, const_cast<char**>(args));
+```
+
+### 阶段3：second_stage
+
+```c
+int SecondStageMain(int argc, char** argv) {
+    // 依然需要注册信号处理函数
+    if (REBOOT_BOOTLOADER_ON_PANIC) {
+        InstallRebootSignalHandlers();
+    }
+    //...
+
+    // 重定向日志
+    SetStdioToDevNull(argv);
+    InitKernelLogging(argv);
+    LOG(INFO) << "init second stage started!";
+    SelinuxSetupKernelLogging();
+    // Update $PATH in the case the second stage init is newer than first stage init, where it is
+    // first set.
+    //...
+    // 开启属性服务
+    StartPropertyService(&property_fd);
+    //...
+    // 加载 init.rc 文件
+    LoadBootScripts(am, sm);
+}
+```
+
+### 阶段4：加载 `init.rc` 文件
+
+#### `init.rc` 文件格式
+
+`init.rc` 文件类似 yml 文件，以块为单位，块分为动作块和服务。
+
+- 动作：以关键字 on 开头，表示在某个时候执行的一组命令。
+
+```yaml
+on  <trigger>         # 触发条件
+    <command>         # 执行命令
+    <command1>        # 可以执行多个命令
+```
+
+- 服务：以关键在 service 开头，表示启动某个进程。
+
+```yaml
+service <name> <pathname> [ <argument> ]*
+    <option>
+    <option>
+```
+
+#### `init.rc` 文件解析
+
+LoadBootScripts 会解析所有的 `*.rc` 文件，并将解析出来的 action 和 service 存储在 ActionManager 和 ServiceList 中。
+
+```c
+static void LoadBootScripts(ActionManager& action_manager, ServiceList& service_list) {
+    Parser parser = CreateParser(action_manager, service_list);
+    std::string bootscript = GetProperty("ro.boot.init_rc", "");
+    if (bootscript.empty()) {
+        parser.ParseConfig("/system/etc/init/hw/init.rc");
+        if (!parser.ParseConfig("/system/etc/init")) {
+            late_import_paths.emplace_back("/system/etc/init");
+        }
+        // late_import is available only in Q and earlier release. As we don't
+        // have system_ext in those versions, skip late_import for system_ext.
+        parser.ParseConfig("/system_ext/etc/init");
+        if (!parser.ParseConfig("/vendor/etc/init")) {
+            late_import_paths.emplace_back("/vendor/etc/init");
+        }
+        if (!parser.ParseConfig("/odm/etc/init")) {
+            late_import_paths.emplace_back("/odm/etc/init");
+        }
+        if (!parser.ParseConfig("/product/etc/init")) {
+            late_import_paths.emplace_back("/product/etc/init");
+        }
+    } else {
+        parser.ParseConfig(bootscript);
+    }
+}
+```
+
+在分析完成后，会按照顺序以 trigger 为单位进行触发，等一个 trigger 中的 action 按照顺序执行完成后，再执行下一个 trigger。
+
+# zygote 进程启动分析
+
+<img src="aosp/launch/resources/launch_2.png" style="width:30%"/>
+
+1. init.rc 中定义了一个 action late-init, 其会在 init 进程初始化完成后被触发。
+2. late-init 会进一步触发 zygote-start action。
+3. zygote-start 会按序触发 zygote 和 zygote_secondary 两个服务。
+4. zygote 和 zygote_secondary 服务本质是调用 app_process 命令行工具。
+5. app_process 接收不同的参数来初始化 zygote 进程。
+
+## app_process 用法
+
+```bash
+app_process [java-options] cmd-dir start-class-name [options]
+
+/system/bin/app_process32 -Xzygote /system/bin --zygote --start-system-server --socket-name=zygote
+```
+
+- `-Xzygote` 属于 java-options，这些参数最终会传递给 Java 虚拟机。并且参数必须以 - 开头，一旦遇到非 - 或者 --，表示 ```java-options``` 结束。
+- `/system/bin` 属于程序运行目录。
+- `--xx` 开头的部分都属于 `options`。这些参数都以符号--开头。参数 --zygote 表示要启动 Zygote 进程，--start-system-server 表示要启动 SystemServer，--socket-name=zygote 用于指定 Zygote 中 socket 服务的名字。
+
+## app_process 流程
+
+1. 初始化 AppRuntime, AppRuntime 主要用来创建和初始化虚拟机。
+2. 解析 java options, 并将其存储在 AppRuntime 中。
+3. 启动对应的 java 类。
+
+```cpp
+int main(int argc, char* const argv[])
+{
+    //...
+    // 初始化 Runtime
+    AppRuntime runtime(argv[0], computeArgBlockSize(argc, argv));
+    // Process command line arguments
+    // ignore argv[0]
+    argc--;
+    argv++;
+    //...
+    // 解析 java options
+    while (i < argc) {
+        const char* arg = argv[i++];
+        if (strcmp(arg, "--zygote") == 0) {
+        //...
+        } else if (strncmp(arg, "--", 2) != 0) {
+            className = arg;
+            break;
+        } else {
+            --i;
+            break;
+        }
+    }
+    // 在 runtime 中启动对应的 java 类
+    if (zygote) {
+        runtime.start("com.android.internal.os.ZygoteInit", args, zygote);
+    } else if (!className.empty()) {
+        runtime.start("com.android.internal.os.RuntimeInit", args, zygote);
+    } else {
+        fprintf(stderr, "Error: no class name or --zygote supplied.\n");
+        app_usage();
+        LOG_ALWAYS_FATAL("app_process: no class name or --zygote supplied.");
+    }
+}
+```
+
+## runtime.start 流程
+
+AppRuntime 提供了一个执行 java 字节码的环境。
+
+### AppRuntime 初始化
+
+AppRuntime 初始化的时候，会初始化 skia 图形系统，并把自己绑定到 global static 变量。
+
+```cpp
+static AndroidRuntime* gCurRuntime = NULL;
+
+AndroidRuntime::AndroidRuntime(char* argBlockStart, const size_t argBlockLength) :
+        mExitWithoutCleanup(false),
+        mArgBlockStart(argBlockStart),
+        mArgBlockLength(argBlockLength)
+{
+    SkGraphics::Init();
+    mOptions.setCapacity(20);
+    assert(gCurRuntime == NULL);
+    gCurRuntime = this;
+}
+
+class AppRuntime : public AndroidRuntime
+{
+public:
+    AppRuntime(char* argBlockStart, const size_t argBlockLength)
+        : AndroidRuntime(argBlockStart, argBlockLength)
+        , mClass(NULL)
+    {
+    }
+
+    //......
+
+    String8 mClassName;
+    Vector<String8> mArgs;
+    jclass mClass;
+};
+```
+
+### AppRuntime.start
+
+1. 环境相关初始化
+
+2. 注册 jni
+
+```c
+static int register_jni_procs(const RegJNIRec array[], size_t count, JNIEnv* env)
+{
+    for (size_t i = 0; i < count; i++) {
+        if (array[i].mProc(env) < 0) {
+#ifndef NDEBUG
+            ALOGD("----------!!! %s failed to load\n", array[i].mName);
+#endif
+            return -1;
+        }
+    }
+    return 0;
+}
+static const RegJNIRec gRegJNI[] = {
+    REG_JNI(register_com_android_internal_os_RuntimeInit),
+    REG_JNI(register_com_android_internal_os_ZygoteInit_nativeZygoteInit),
+    REG_JNI(register_android_os_SystemClock),
+    REG_JNI(register_android_util_EventLog),
+    REG_JNI(register_android_util_Log),
+    REG_JNI(register_android_util_MemoryIntArray),
+    REG_JNI(register_android_util_PathParser),
+    REG_JNI(register_android_util_StatsLog),
+    REG_JNI(register_android_util_StatsLogInternal),
+    REG_JNI(register_android_app_admin_SecurityLog),
+    REG_JNI(register_android_content_AssetManager),
+    REG_JNI(register_android_content_StringBlock),
+    REG_JNI(register_android_content_XmlBlock),
+    REG_JNI(register_android_content_res_ApkAssets),
+    REG_JNI(register_android_text_AndroidCharacter),
+    REG_JNI(register_android_text_Hyphenator),
+    REG_JNI(register_android_view_InputDevice),
+    REG_JNI(register_android_view_KeyCharacterMap),
+    REG_JNI(register_android_os_Process),
+    REG_JNI(register_android_os_SystemProperties),
+    REG_JNI(register_android_os_Binder),
+    REG_JNI(register_android_os_Parcel),
+    REG_JNI(register_android_os_HidlSupport),
+    REG_JNI(register_android_os_HwBinder),
+    REG_JNI(register_android_os_HwBlob),
+    REG_JNI(register_android_os_HwParcel),
+    REG_JNI(register_android_os_HwRemoteBinder),
+    REG_JNI(register_android_os_NativeHandle),
+    // ...... 省略大部分
+};
+```
+
+3. 通过 jni 启动 `com.android.internal.os.ZygoteInit`
+
+- 获取 `ZygoteInit` 类中的 `main` 方法
+- 调用 `main` 方法
+
+```c
+// className = com.android.internal.os.ZygoteInit
+char* slashClassName = toSlashClassName(className != NULL ? className : "");
+jclass startClass = env->FindClass(slashClassName);
+if (startClass == NULL) {
+    ALOGE("JavaVM unable to locate class '%s'\n", slashClassName);
+    /* keep going */
+} else {
+    jmethodID startMeth = env->GetStaticMethodID(startClass, "main",
+        "([Ljava/lang/String;)V");
+    if (startMeth == NULL) {
+        ALOGE("JavaVM unable to find main() in '%s'\n", className);
+        /* keep going */
+    } else {
+        env->CallStaticVoidMethod(startClass, startMeth, strArray);
+        //...
+    }
+//...
+}
+```
+
+### ZygoteInit.main 
+
+1. 解析参数，初始化一些数据。
+2. 初始化 zygoteServer 对象，调用 forkSystemServer 创建 SystemServer 进程。
+
+> SystemServer 进程是一个非常重要的进程，几乎所有 java 层的binder 服务都运行在这个进程中。
+
+forkSystemServer 会通过 jni 调用到 c 中的 fork 函数来创建新的进程。
+
+forkSystemServer 返回后，如果不是 null ，就代表是 SystemServer 进程，这个进程通过 run 方法来执行自己的 main 函数。 而 zygote 进程进入一个循环，从而处理到来的 socket 消息。
+
+```c
+{
+zygoteServer = new ZygoteServer(isPrimaryZygote);
+
+if (startSystemServer) {
+    Runnable r = forkSystemServer(abiList, zygoteSocketName, zygoteServer);
+
+    // {@code r == null} in the parent (zygote) process, and {@code r != null} in the
+    // child (system_server) process.
+    if (r != null) { // forkSystemServer 进程
+        r.run();
+        return;
+      }
+    }
+
+    Log.i(TAG, "Accepting command socket connections");
+
+    // The select loop returns early in the child process after a fork and
+    // loops forever in the zygote.
+    // zygote 进程
+    caller = zygoteServer.runSelectLoop(abiList);
+}
+```
+
+
+# 应用进程启动
+
+## 借助 Zygote 启动应用流程
+
+1. Zygote 使用 epoll 监听 socket fd。
+2. SystemServer 中的 AMS 向 Zygote 发送一个启动新进程的 Socket 消息
+3. Zygote 收到启动新进程的 socket 消息后，fork 新进程并执行新进程的 main 函数 
+
+
