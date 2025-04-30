@@ -15,6 +15,8 @@
 
 ## [系统启动](aosp/launch/)
 
+## [HAL](aosp/hal/)
+
 ## [SeLinux](aosp/selinux/)
 
 
