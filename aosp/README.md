@@ -10,3 +10,16 @@
 ## [AOSP Source Code Analysis](aosp/source/)
 
 ## [Binder](aosp/binder/)
+
+## [基础组件](aosp/componment/)
+
+## [系统启动](aosp/launch/)
+
+## [SeLinux](aosp/selinux/)
+
+
+## 巨人的肩膀
+
+### - [Android大神](https://wangkuiwu.github.io/)
+### - [Android Framework Tech Learning](http://ahaoframework.tech/)
+
