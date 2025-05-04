@@ -556,6 +556,369 @@ SurfaceComposerClient::Transaction{}
 ### BLASTBufferQueue 初始化
 
 `BLASTBufferQueue` 的作用：
+
+<img src="aosp/display/resources/d_3.png" style="width:50%"/>
+
 1. App 调用 dequebuffer 向 BLASTBufferQueue 申请一个 buffer.
 2. App 拿到 buffer 后开始渲染，所谓渲染就是把显示指令转换为内存数据写入 buffer.
 3. 渲染完成后，将写入数据的 buffer 通过事务的方式提交给 SurfaceFligner，SurfaceFlinger 负责 buffer 的合成显示。
+
+`BLASTBufferQueue` 的初始化过程：
+
+```cpp
+new BLASTBufferQueue
+    createBufferQueue
+        new BufferQueueCore
+        new BBQBufferQueueProducer
+        new BufferQueueConsumer
+    new BLASTBufferItemConsumer
+        mCore->mConsumerListener = consumerListener;
+```
+
+主要做了如下的工作：
+- new 了一个 BufferQueueCore 对象，该对象内部有好几数据结构，用于管理帧缓存
+- new 了一个 BBQBufferQueueProducer 对象，该对象用于从 BufferQueueCore 中取出一个 buffer，接着 app 就可以向 buffer 填充要显示的内容
+- new 了 BufferQueueConsumer 对象，该对象用于从 BufferQueueCore 中取出一个 buffer，然后提交给 sf 显示
+
+### BufferQueueProducer 获取帧缓存
+
+#### 前置工作
+
+1. 通过生产者设置最大出队列的 Buffer 数目。
+2. 给 `BufferQueueCore` 设置一些参数
+
+```cpp
+// 获取到 GraphicBuffer 的生产者
+sp<IGraphicBufferProducer> igbProducer;
+// 返回前面 new 的 BBQBufferQueueProducer
+igbProducer = mBlastBufferQueue->getIGraphicBufferProducer();
+// 设置最大出队列 buffer 数量
+igbProducer->setMaxDequeuedBufferCount(2);
+IGraphicBufferProducer::QueueBufferOutput qbOutput;
+// 给 BufferQuequCore 设置一些参数
+igbProducer->connect(new StubProducerListener, NATIVE_WINDOW_API_CPU, false, &qbOutput);
+```
+
+#### 获取 Buffer
+
+1. 初始化一个 fence，fence 是一个指针，是内核的一种硬件同步机制。当 App 拿到 buffer 和 fence 后，就可以调用 GPU 开始绘制，所谓绘制，就是把各种指令转换为需要显示的内存内容并写入 buffer，这个过程通常比较耗时，如果在这里等待就浪费了 cpu 资源，所以程序通知 gpu 开始绘制后（gpu 绘制是一个异步过程），就把 buffer 和 Fence 通过 binder 传递给 Sf 准备合成显示，sf 这个时候其实不知道 gpu 的绘制完成没有，就调用 fence.wait 阻塞等待，当 gpu 完成绘制以后，就会调用 fence.sigal，这个时候 sf 就会从 fence.wait 的阻塞中被唤醒进行后续的 buffer 合成工作。
+
+2. 调用dequeueBuffer， 从 BufferQueueCore 的 mSlots 中获取到一个 buffer 和 一个 fence，准备着给 App 绘制用。
+
+dequeueBuffer() 默认优先从 mFreeBuffers 中获取 slot，因为 mFreeBuffers 中的 slot 已经有 buffer 与之绑定过了，这样就不用再重新分配 buffer 了。然后以 slot 为索引在 mSlot 数组中找到对应的 BufferSlot 对象，并将 BufferSlot 对象的状态从 FREE 修改为 DEQUEUED，然后将 BufferSlot 的索引插入 ActiveBuffers 中，整个过程用动图描述如下如下：
+
+<img src="aosp/display/resources/d_4.gif" style="width:50%"/>
+
+如果 mFreeBuffers 为空，则从 mFreeSlots 中获取 slot：
+
+<img src="aosp/display/resources/d_5.gif" style="width:50%"/>
+
+```cpp
+int slot;
+sp<Fence> fence;
+sp<GraphicBuffer> buf;
+
+// 1. dequeue buffer
+igbProducer->dequeueBuffer(&slot, &fence, nativeSurface->width(), nativeSurface->height(),
+                                        PIXEL_FORMAT_RGBA_8888, GRALLOC_USAGE_SW_WRITE_OFTEN,
+                                        nullptr, nullptr);
+igbProducer->requestBuffer(slot, &buf);
+```
+
+#### 使用Buffer
+
+App 通过调用 dequeueBuffer 获取到一个可用的 buffer 后，就可以往这个 buffer 中填充数据了. 填充完数据后调用 queueBuffer 把 buffer 再还回去。
+
+```cpp
+uint8_t* img = nullptr;
+err = buf->lock(GRALLOC_USAGE_SW_WRITE_OFTEN, (void**)(&img));
+if (err != NO_ERROR) {
+    ALOGE("error: lock failed: %s (%d)", strerror(-err), -err);
+    break;
+}
+int countFrame = 0;
+countFrame = (countFrame+1)%3;
+
+fillRGBA8Buffer(img, resolution.getWidth(), resolution.getHeight(), buf->getStride(),
+                countFrame == 0 ? 255 : 0,
+                countFrame == 1 ? 255 : 0,
+                countFrame == 2 ? 255 : 0);
+```
+
+`queueBuffer` 的过程中：
+- queueBuffer() 根据调用者传入的 slot 参数，将其对应的 BufferSlot 状态从 DEQUEUED 修改为 QUEUED，并根据该 BufferSlot 的信息生成一个 BufferItem 对象，然后添加到 mQueue 队列中。
+- 调用 Consumer 的 Listener 监听函数，通知 Consumer 可以调用 acquireBuffer 了。
+
+```cpp
+// 3. queue the buffer to display
+IGraphicBufferProducer::QueueBufferOutput qbOutput;
+IGraphicBufferProducer::QueueBufferInput input(systemTime(), true /* autotimestamp */,
+                                                HAL_DATASPACE_UNKNOWN, {},
+                                                NATIVE_WINDOW_SCALING_MODE_FREEZE, 0,
+                                                Fence::NO_FENCE);
+igbProducer->queueBuffer(slot, input, &qbOutput);
+```
+
+<img src="aosp/display/resources/d_6.gif" style="width:50%"/>
+
+
+### BufferQueueProducer 消费帧缓存
+
+acquireBuffer() 从 mQueue 队列中取出 1 个 BufferItem，并作为出参返回给调用者，同时修改该 BufferItem 对应的 slot 状态：QUEUED —> ACQUIRED。
+
+<img src="aosp/display/resources/d_7.gif" style="width:50%"/>
+
+在 `SurfaceFlinger` 拿到 buffer 并消费后，会触发 releaseBuffer(). 根据调用者传入的 slot 参数，将其对应的 BufferSlot 状态从 ACQUIRED 修改为 FREE，并将该 slot 从 mActiveBuffers 中迁移到 mFreeBuffers 中。注意，这里并没有对该 slot 绑定的 buffer 进行任何解绑操作。
+
+<img src="aosp/display/resources/d_8.gif" style="width:50%"/>
+
+
+
+## VSync
+
+### 什么是 VSync?
+
+VSync 是一个电平信号，由显示器在屏幕刷新前向外提供，想避免主机视频信息输出与屏幕刷新频率不一致导致的画面撕裂问题。
+
+
+### Android VSync 基本框架
+
+1. Android 显示器驱动板上有一个 IO 口与主机相连，这个 IO 会定时发送电平信号，触发 VSync 中断。
+2. 当 Vsync 信号到来时，linux 内核就会收到一个中断，内核会根据对应的中断号去调用对应的中断处理函数。VSync 的中断处理函数会调用到 DRM 模块中，DRM 模块进一步又会调用到 HWComposor Hal 模块。
+3. SurfaceFligner 在初始化时会向 HWComposor HAL 注册一个 Binder 回调（实际就是 sf 这边的一个匿名 Binder），HWComposor HAL 收到硬件 Vsync 信号后就会调用到这个回调，从何将硬件 Vsync 信号发送给 SurfaceFlinger。
+4. SurfaceFlinger 中的回调函数收到硬件传递来的 Vsync 信号后，会使用 VsyncSchedule 将 Vsync 信号到达时间和 Vsync 信号周期等信息记录下来。当数据到达 6 个以上时，会通过简单线性回归公式。当 App 需要绘制图像时，Choreographer 通过 binder 向 VsyncSchedule 发起一个请求信号，VsyncSchedule 收到请求后会通过刚才记录的信息计算出`软件 Vsync` 信号，然后通过 socket 将该信号传递给 App，App 收到信号后开始绘制渲染工作。
+
+在 Android 显示系统中，当收到 VSync（垂直同步）信号 后，系统会协调 UI 渲染和帧的绘制，确保画面流畅无撕裂。以下是 Android 收到 VSync 信号后的主要处理流程：
+
+1. VSync 信号的作用
+VSync（Vertical Synchronization）信号由显示设备的硬件定时发出（通常是 60Hz，即每 16.67ms 一次），用于同步屏幕刷新和 GPU/CPU 的渲染工作，避免画面撕裂（tearing）和卡顿（jank）。
+
+2. Android 收到 VSync 后的处理流程
+Android 的显示系统采用 "VSync 驱动的渲染管线"，主要涉及 Choreographer、SurfaceFlinger 和 RenderThread 等核心组件。具体流程如下：
+
+(1) UI 线程（主线程）处理
+Choreographer 接收 VSync 信号：
+
+Choreographer 是 Android 中协调动画、输入和绘制的核心类。
+
+当 VSync 信号到达时，Choreographer 会回调注册的 FrameCallback（如 ViewRootImpl 的 doFrame()）。
+
+执行 UI 更新：
+
+测量（Measure） & 布局（Layout）：如果视图层级有变化（如 View 的尺寸或位置变化），会触发 onMeasure() 和 onLayout()。
+
+绘制（Draw）：调用 View.draw() 生成新的 UI 帧，但此时不会直接渲染到屏幕，而是记录到 DisplayList（GPU 可执行的绘制指令列表）。
+
+(2) RenderThread（渲染线程）处理
+同步 DisplayList 到 RenderThread：
+
+UI 线程生成的 DisplayList 会被同步到 RenderThread（独立线程，负责 GPU 渲染）。
+
+RenderThread 负责将 DisplayList 转换为 GPU 可执行的 OpenGL/DrawFrame 操作。
+
+GPU 渲染：
+
+RenderThread 调用 eglSwapBuffers() 提交渲染数据到 GPU。
+
+GPU 执行渲染，生成最终的像素数据（GraphicBuffer）。
+
+(3) SurfaceFlinger 合成
+BufferQueue 提交：
+
+渲染完成的 GraphicBuffer 会被放入 BufferQueue（生产者-消费者模型）。
+
+SurfaceFlinger（Android 的合成器）监听 BufferQueue，等待新的帧数据。
+
+合成（Composition）：
+
+SurfaceFlinger 在下一个 VSync 周期内，将所有层的 GraphicBuffer 合成为最终的屏幕图像。
+
+最终通过 Hardware Composer (HWC) 或 GPU 输出到显示设备。
+
+
+### Choreographer
+
+Choreographer 主要用于负责软件 Vsync 信号的请求与接受。
+
+- App 需要绘制一帧时，Choreographer 负责向 SurfaceFlinger 请求新的软件 Vsync 信号
+- 软件 Vsync 信号到达时，Choreographer 负责新的输入、动画、和绘制等任务的执行。
+
+
+### SurfaceFlinger 图层合成过程
+
+### WMS/AMS 窗口层级结构
+
+WMS/AMS 中使用 WindowContainer 对象来描述一块显示区域，使用 WindowContainer 组成的树来描述整个显示界面。 窗口容器树的每一个节点都是 WindowContainer 的子类。
+
+```java
+class WindowContainer{
+   /**
+     * The parent of this window container.
+     * For removing or setting new parent {@link #setParent} should be used, because it also
+     * performs configuration updates based on new parent's settings.
+     */
+    private WindowContainer<WindowContainer> mParent = null;
+
+	// ......
+
+    // List of children for this window container. List is in z-order as the children appear on
+    // screen with the top-most window container at the tail of the list.
+    protected final WindowList<WindowContainer> mChildren = new WindowList<WindowContainer>();
+};
+```
+#### WindowState 窗口类
+
+在 WMS/AMS 中，一个 WindowState 对象对应一个应用侧的窗口，通常位于树的最底层。可以将屏幕理解为一张画布，WindowState 就是其中的一个图层。
+
+
+#### WindowToken、ActivityRecord 和 WallpaperWindowToken —— WindowState 的父节点
+
+这三个类可以理解成图层容器类，根据不同的场景作为 WindowState 的父节点。
+
+- Activity 窗口由系统自动创建，不需要 App 主动去调用 ViewManager.addView 去添加一个窗口，比如写一个Activity 或者 Dialog，系统就会在合适的时机为 Activity 或者 Dialog 调用 ViewManager.addView 去向 WindowManager 添加一个窗口。这类 WindowState 在创建的时候，其父节点为 ActivityRecord。
+
+- 非 Activity 窗口，这类窗口需要 App 主动去调用 ViewManager.addView 来添加一个窗口，比如 NavigationBar 窗口的添加，需要 SystemUI 主动去调用 ViewManager.addView 来为 NavigationBar 创建一个新的窗口。这类 WindowState 在创建的时候，其父节点为 WindowToken。
+
+- Activity 之上的窗口，父节点为 WindowToken，如 StatusBar 和 NavigationBar。 Activity 窗口，父节点为 ActivityRecord，如 Launcher。 Activity 之下的窗口，父节点为 WallpaperWindowToken，如 ImageWallpaper 窗口。
+
+
+#### Task - ActivityRecord 的父节点
+
+一个 Task 对象就代表了一个任务栈，内部保存了一组相同 affinities 属性的相关 Activity，这些 Activity 用于执行一个特定的功能。比如发送短信，拍摄照片等。Taks 继承自 TaskFragment，TaskFragment 继承自 WindowContainer。除了上述的功能，在我们描述的窗口容器树中， Task 是 ActivityRecord 的父节点，内部管理有多个 ActivityRecord 对象。
+
+#### DisplayArea 显示区域
+
+```java
+public class DisplayArea<T extends WindowContainer> extends WindowContainer<T> {
+    // ......
+    private final String mName；
+    // ......
+}
+```
+
+
+DisplayArea 代表了屏幕上的一块区域。
+
+- DisplayArea 中有一个字符串成员 mName，表示 DisplayArea 对象的名字，其内容由三部分组成 name + ":" + mMinLayer + ":" + mMaxLayer。其中：
+    - name：用于指定 DisplayArea 的特殊功能（Feature），如：name 的值为 "WindowedMagnification" 表示 DisplayArea 代表的屏幕区域支持窗口放大。如果没有特殊功能且是叶子节点，name 的值为 "leaf"
+    - mMinLayer 和 mMaxLayer，指定当前 DisplayArea 的图层高度范围，WMS 将 Z 轴上的纵向空间分成了 0 到 36 一共 37 个区间，值越大代表图层高度越高，这里两个值，指定了图层高度的范围区间。
+
+下面介绍几种 DisplayArea.
+
+1. WindowedMagnification
+    拥有特征的层级： 0-31
+    特征描述： 支持窗口缩放的一块区域，一般是通过辅助服务进行缩小或放大
+
+2. HideDisplayCutout
+    拥有特征的层级： 0-14 16 18-23 26-31
+    特征描述：隐藏剪切区域，即在默认显示设备上隐藏不规则形状的屏幕区域，比如在代码中打开这个功能后，有这个功能的图层就不会延伸到刘海屏区域。
+
+3. OneHanded
+    拥有特征的层级：0-23 26-32 34-35
+    特征描述：表示支持单手操作的图层
+
+4. FullscreenMagnification
+    拥有特征的层级：0-12 15-23 26-27 29-31 33-35
+    特征描述：支持全屏幕缩放的图层，和上面的不同，这个是全屏缩放，前面那个可以局部.
+
+5. ImePlaceholder
+    拥有特征的层级： 13-14
+    特征描述：输入法相关
+
+
+## 窗口显示过程
+
+> 图层，在 App 里面叫 Window/窗口，在 WMS 叫 SurfaceControl/Surface，在 SurfaceFlinger 叫 Layer。
+
+### 添加窗口方式
+
+Android 中添加一个窗口有两种方式，第一是启动一个 activity，第二种是添加悬浮窗。
+
+### Activity 显示过程整体分析
+
+
+#### Activity 冷启
+
+冷启动 Activity，目标 App 启动后，会去执行 LaunchActivityItem 和 ResumeActivityItem 这 2 个事务，整体的调用链如下:
+> 无论是悬浮窗还是 Activity 最终都会通过 WindowManagerImpl 调用到 WindowManagerGlobal.addView 来添加窗口。
+> 其中 WindowManagerGlobal.addView 中核心的三个元素：
+> 
+> View：窗口对应的 View 树
+> ViewGroup.LayoutParams params：窗口的大小位置布局信息
+> ViewRootImpl：App 中窗口显示的大管家，会在 WindowManagerGlobal.addView 中构建，和窗口一一对应。
+
+
+```java
+LaunchActivityItem::execute
+    ActivityThread::handleLaunchActivity
+        ActivityThread::performLaunchActivity
+            Instrumentation::newActivity                    -- 构建 Activity
+            Activity::attach                                -- 构建 PhoneWindow
+                Window::init
+                Window::setWindowManager
+            Instrumentation::callActivityOnCreate  
+                Activity::performCreate
+                    Activity::onCreate
+                        Activity::setContentView            -- 构建 DecorView
+
+ResumeActivityItem::execute
+    ActivityThread::handleResumeActivity
+        ActivityThread::performResumeActivity   
+            Activity::performResume   
+                Instrumentation::callActivityOnResume
+                    Activity::onResume        
+        WindowManagerImpl::addView                          -- 构建 ViewRootImpl
+            WindowManagerGlobal::addView   
+                ViewRootImpl::setView                          -- 显示 Window
+```
+
+ViewRootImpl::setView 是显示 Activity 的起点，是我们关注的重点，其主要调用链如下：
+
+阶段一：Activity Window DecorView 的初始化
+
+阶段二：向 WMS 添加 Window，预测量 Window 尺寸
+
+阶段三：预测量 View 树，添加 SurfaceControl/Layer，测量 Window 大小，初始化 BLASTBufferQueue
+
+阶段四：View 树的测量布局绘制
+
+阶段五：显示窗口
+
+```java
+ViewRootImpl::setView
+   ViewRootImpl::requestLayout
+      ViewRootImpl::scheduleTraversals             
+            ViewRootImpl.TraversalRunnable::run             -- 异步操作 
+               ViewRootImpl::doTraversal
+                  ViewRootImpl::performTraversals
+                    ViewRootImpl::measureHierarchy                  -- 第 3 步预 measure View 树
+                    ViewRootImpl::relayoutWindow                    -- 第 4 步：relayoutWindow，添加 SurfaceControl/Layer，测量窗口大小，初始化 BBQ
+                        Session::relayout                           -- 远程调用，构建 SurfaceControl，测量窗口大小，Transaction 配置 Layer
+                        ViewRootImpl::updateBlastSurfaceIfNeeded    -- 初始化 BBQ              
+                    ViewRootImpl::performMeasure                    -- 第 5 步：View 的 测量布局绘制  
+                    ViewRootImpl::performLayout
+                    ViewRootImpl::performDraw        
+                    ViewRootImpl::createSyncIfNeeded                -- 第 6 步：通知 WMS，客户端已经完成绘制，可以显示 Surface 了
+   Session.addToDisplayAsUser                           --- 第 1 步：addWindow
+   mWindowLayout.computeFrames                          --- 第 2 步：预计算 Window 尺寸
+```
+
+
+<img src="aosp/display/resources/d_9.png" style="width:100%"/>
+
+##### Activity 初始化
+
+1. 获取 WindowManager 服务。
+2. 创建 PhoneWindow，并由其管理 DecorView.
+3. 获取窗口的布局参数，通过 WindowManager 添加视图(DecorView)。
+4. 在 WM 的 addView 过程中，创建 ViewRootImpl， 并通过它进行 addView.
+
+
+##### 布局过程
+
+1. performTraversals() 方法后的第一个阶段，它会对 View 树进行第一次测量。在此阶段中将会计算出 View 树为显示其内容所需的尺寸，即期望的窗口尺寸。（调用measureHierarchy()）
+2. 布局窗口阶段：根据预测量的结果，通过 IWindowSession.relayout() 方法向WMS请求调整窗口的尺寸等属性，这将引发 WMS 对窗口进行重新布局，并将布局结果返回给 ViewRootImpl。（调用relayoutWindow()）
+3. 最终测量阶段：预测量的结果是View树所期望的窗口尺寸。然而由于在WMS中影响窗口布局的因素很多，WMS不一定会将窗口准确地布局为View树所要求的尺寸，而迫于WMS作为系统服务的强势地位，View树不得不接受WMS的布局结果。因此在这一阶段，performTraversals()将以窗口的实际尺寸对View树进行最终测量。（调用performMeasure()）
+4. 布局View树阶段：完成最终测量之后便可以对View树进行布局了。（调用performLayout()）
+5. 绘制阶段：确定了控件的位置与尺寸后，便可以对View树进行绘制了。（调用performDraw()）
+6. 显示窗口
