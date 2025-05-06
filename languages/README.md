@@ -2,6 +2,6 @@
 
 ## [Kotlin](languages/kotlin/)
 
-## C++
+## [C++](languages/cpp/)
 
 ## ...
