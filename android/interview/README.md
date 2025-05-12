@@ -74,6 +74,14 @@ startActivity(intentRight)
 
 #### Fragment
 
+Fragment是一种可以嵌入在Activity当中的UI片段，它能让程序更加合理和充分地利用大屏幕的空间，因而在平板上应用得非常广泛。
+
+##### 设计 Fragment
+
+##### 静态加载
+
+##### 动态加载
+
 ### Service
 
 #### Android 线程
