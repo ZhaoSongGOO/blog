@@ -78,7 +78,23 @@ Fragment是一种可以嵌入在Activity当中的UI片段，它能让程序更�
 
 ##### 设计 Fragment
 
+1. 设置对应的 `xml` 文件
+
+2. 编写对应的 `Fragment` 类，该类最好继承自 AndroidX 下面的 `Fragment`。并重写 `onCreateView` 方法。在该方法中加载对应的布局文件。
+
 ##### 静态加载
+
+1. 在想要使用该 `Fragment` 的 `Activity` 的布局文件中以 `<fragment>` 来引入对应的 `Fragment`。
+
+2. :exclamation: 需要注意的是，想使用 `Fragment` 的 `Activity` 必须继承自 `androidx.appcompat.app.AppCompatActivity`。否则会报错。
+
+```xml
+<fragment
+    android:id="@+id/left"  // 必须提供id
+    android:name="com.uiapp.lion.fragments.LeftFragment"  // Fragment 的完整包名
+    android:layout_width="100dp"
+    android:layout_height="match_parent" />
+```
 
 ##### 动态加载
 
