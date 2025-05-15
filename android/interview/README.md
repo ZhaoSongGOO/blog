@@ -414,9 +414,136 @@ class NotifyService : Service() {
 
 #### Android 线程
 
-#### 服务类型
+##### Thread
 
-#### Handler 机制
+> 如何结束一个 Thread 创建的线程?
+> 对于不执行阻塞任务的线程，无需关心，运行完成后会自动停止。
+> 如果我们就想手动终止一个线程，或者必须手动终止(例如下面这个无限循环的，在整个进程退出前，它都不会销毁, 更严重的是， JVM 在退出前会等待所有线程执行完成才会退出)。那就需要对其调用 interrupt.
+> 需要注意的是 interrupt 不会直接中断线程，只是将其设置成中断状态，只有这个线程 block 中包含阻塞调用，才会直接触发 InterruptedException 来进行中断。如果我们不包含阻塞调用，那就要手动判断中断状态以适时退出。
+> 同时还有一个更加简单的操作，我们可以对线程设置成 `Daemon`, 这样 JVM 在退出前不会等待他，而是直接销毁。
+
+```kotlin
+package com.uiapp.render
+
+import java.util.concurrent.LinkedBlockingQueue
+
+class Actor {
+    var actorThread: Thread
+    var taskQueue: LinkedBlockingQueue<() -> Unit> = LinkedBlockingQueue<() -> Unit>()
+
+    init {
+        // 创建一个线程
+        actorThread =
+            Thread {
+                try {
+                    while (true) {
+                        val task = taskQueue.take() // 阻塞调用，含有阻塞调用的线程逻辑，会在被 interrupt的时候，触发 InterruptedException
+                        task()
+                    }
+                } catch (e: InterruptedException) {
+                    print("catch InterruptedException\n")
+                    Thread.currentThread().interrupt()
+                }
+            }
+    }
+
+    fun start()  {
+        actorThread.start() // 线程启动
+    }
+
+    fun postTask(task: () -> Unit) {
+        taskQueue.put(task) // 向任务队列中拋送任务
+    }
+
+    fun stop()  {
+        actorThread.interrupt() // 结束线程
+    }
+}
+
+fun main()  {
+    print("Thread-Test:\n")
+
+    val actor = Actor()
+    actor.start()
+    actor.postTask { print("First task!\n") }
+    Thread.sleep(1000)
+    actor.postTask { print("second task!\n") }
+
+    Thread.sleep(5000)
+
+    actor.stop()
+    Thread.sleep(1000)
+}
+```
+
+不含阻塞调用的线程如何响应 `interrupt`。
+```kotlin
+package com.uiapp.render
+
+import java.util.concurrent.LinkedBlockingQueue
+
+class Actor {
+    var actorThread: Thread
+
+    init {
+        // 创建一个线程
+        actorThread =
+            Thread {
+                while (!Thread.currentThread().isInterrupted) {  // 需要在这里检测线程是否被设置 interrupt 状态
+                    // do nothing
+                }
+            }
+    }
+
+    fun start()  {
+        actorThread.start() // 线程启动
+    }
+
+    fun stop()  {
+        actorThread.interrupt() // 结束线程
+    }
+}
+
+fun main()  {
+    print("Thread-Test:\n")
+
+    val actor = Actor()
+    actor.start()
+    actor.stop()
+}
+```
+
+
+##### 线程池
+
+线程池免去我们手动创建 Thread 的过程，同时也可以提高线程资源的利用率。
+
+```kotlin
+package com.uiapp.render
+
+import java.util.concurrent.Executors
+
+fun main() {
+    print("ThreadPool Test:\n")
+    val executor = Executors.newFixedThreadPool(2)
+
+    executor.submit { println("Task 1 executed") }
+    executor.submit { println("Task 2 executed") }
+    // 这里也必须检测状态，否则整个 JVM 会卡在这个线程执行完成后才能退出
+    executor.submit { while (!Thread.currentThread().isInterrupted) {} }
+
+    // 停止提交任务
+    executor.shutdown()
+
+    // 强制停止任务，对所有的线程发送 interrupt
+    executor.shutdownNow()
+}
+
+```
+
+##### thread 语法糖
+
+#####  Handler 机制
 
 ### BroadcastReceiver
 
