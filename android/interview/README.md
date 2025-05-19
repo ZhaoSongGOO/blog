@@ -568,6 +568,80 @@ fun main() {
 
 #####  Handler 机制
 
+在 Android 中，每一个线程都有一个 `Looper`，其是一个系统内置的线程处理策略，其可以以死循环的方式运行，并不断响应其余线程向其发送的事件。但是默认是不初始化的状态，为什么呢？因为我们大多数线程都是一次性逻辑，用来异步执行一个操作，操作完成后就退出，所以默认不会维持一个比较重的 `Looper` 对象。
+
+1. 如何使用？
+
+- 创建一个 `Handler` 绑定在一个 `Looper`。
+- `Handler` 中实现一些消息的回调方法。
+- 通过 `Handler` 发送消息。这个消息会发送到对应的 `Looper` 中。
+- 收到消息的 `Looper` 会在自己所在的线程中调用 `callback`。
+
+<img src="android/interview/resources/a_4.png" style="width:30%">
+
+2. sendMessage
+```kotlin
+var mThread =
+    thread {
+        Looper.prepare() // 初始化 Looper
+        mBackgroundHandler =
+            object : Handler(Looper.myLooper()!!) {
+                override fun handleMessage(msg: Message) {
+                    when (msg.what) {
+                        1 -> {
+                            handler.sendMessage(
+                                Message.obtain().apply {
+                                    what = 1
+                                    obj = "Message from background 1: ${msg.obj}"
+                                },
+                            )
+                        }
+
+                        2 -> {
+                            handler.sendMessage(
+                                Message.obtain().apply {
+                                    what = 2
+                                    obj = "Message from background 2: ${msg.obj}"
+                                },
+                            )
+                        }
+
+                        else -> {
+                            handler.sendMessage(
+                                Message.obtain().apply {
+                                    what = 3
+                                    obj = "Message from background unknown: ${msg.obj}"
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+
+        Looper.loop() // Looper 进入循环
+    }
+
+    // 其余线程
+
+val message = Message()
+message.obj = "Byte"
+message.what = 2
+mBackgroundHandler.sendMessage(message)
+```
+
+3. 如何结束一个带有 `Looper` 的线程
+
+上文曾经提到过，我们想要对一个无限循环的线程进行终结，就需要对其发送 `interrupt` 信号 或者在初始化的时候就设置成 `damon`。 对于 `Looper` 来说本质也是一个死循环，但是和其余的不同的的地方在于，`Looper` 自身会捕获`interrupt` 信号并进行忽略处理，这导致我们发送 `interrupt` 信号不能达到预期的目的。针对于此，`Looper` 提供了更好的办法来进行退出。
+
+```kotlin
+// quit: 已开始的任务会继续执行完，但未处理的消息会被丢弃
+mBackgroundHandler.looper.quit()
+
+// 同样不中断正在执行的任务，但会保留已到执行时间的消息，仅丢弃未调度的延迟消息。
+mBackgroundHandler.looper.quitSafely()
+```
+
+
 ### BroadcastReceiver
 
 #### 动态注册与静态注册
