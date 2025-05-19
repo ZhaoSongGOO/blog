@@ -644,11 +644,98 @@ mBackgroundHandler.looper.quitSafely()
 
 ### BroadcastReceiver
 
+#### 实现一个自己的 Receiver
+
+```kotlin
+class TimerReceiver : BroadcastReceiver() {
+    override fun onReceive(
+        context: Context?,
+        intent: Intent?,
+    ) {
+        Toast.makeText(context, LionConstants.LION_TAG + ": TimerReceiver", Toast.LENGTH_LONG).show()
+    }
+}
+```
+
 #### 动态注册与静态注册
+
+所有的 `receiver` 在使用的时候都需要注册。
+
+##### 动态注册
+
+```kotlin
+val timeReceiver = TimerReceiver()
+val intent = IntentFilter("android.intent.action.TIME_TICK")
+registerReceiver(timeReceiver, intent)
+
+// 非系统 action，需要在 register 的时候，注明 Context.RECEIVER_NOT_EXPORTED 或者 Context.RECEIVER_EXPORTED，表明是不是其他 App 可以对其发送广播。
+val intent2 = IntentFilter("LION.CUSTOM_IMPLICIT_BROADCAST")
+if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+    registerReceiver(ImplicitReceiver(), intent2, Context.RECEIVER_NOT_EXPORTED)
+}else{
+    registerReceiver(ImplicitReceiver(), intent2)
+}
+```
+
+##### 静态注册
+
+```xml
+<receiver android:name=".broadcast.ExplicitReceiver"
+    android:enabled="true"
+    android:exported="true"> // exported : true 允许其他应用发送广播给这个 receiver，为false 的话，发送的广播必须指定包名以表明是应用内广播。
+    <intent-filter android:priority="100"> // 优先级，越大级别越高
+        <action android:name="LION.CUSTOM_EXPLICIT_BROADCAST"/> // action，接收广播的名字
+    </intent-filter>
+</receiver>
+
+<receiver android:name=".broadcast.ExplicitSecondReceiver"
+    android:enabled="true"
+    android:exported="true">
+    <intent-filter android:priority="10">
+        <action android:name="LION.CUSTOM_EXPLICIT_BROADCAST"/>
+    </intent-filter>
+</receiver>
+```
 
 #### 广播类型
 
-#### 发送广播
+<img src="android/interview/resources/a_5.png" style="width:70%">
+
+##### 显式广播
+
+发送时指定对应的 Receiver class 的就是显式广播，动态注册和静态注册的 receiver 都可以接收显式广播。
+
+```kotlin
+val intent = Intent(this, ExplicitReceiver::class.java)
+sendBroadcast(intent)
+```
+
+##### 隐式广播
+
+除了显式广播外的都是隐式广播。存在下面几个需要注意的点：
+1. 除了系统的隐式广播外，静态注册的 receiver 不能接收隐式广播。
+2. 静态注册的 receiver 可以接收应用内的隐式广播。
+3. 动态注册的 receiver 可以接收任意来源的隐式广播。
+
+```kotlin
+// 发送 action 为 LION.CUSTOM_IMPLICIT_BROADCAST 的隐式广播
+val intent = Intent("LION.CUSTOM_IMPLICIT_BROADCAST")
+// 指定packagename，说明是一个应用内的广播
+intent.setPackage("com.uiapp.lion")
+sendBroadcast(intent)
+```
+
+#### 发送有序广播
+
+可以使用 `sendOrderedBroadcast` 来发送有序广播，将会按照优先级来按序被 `receiver` 接收。
+
+```kotlin
+val intent = Intent("LION.CUSTOM_EXPLICIT_BROADCAST")
+intent.setPackage("com.uiapp.lion")
+sendOrderedBroadcast(intent, null)
+```
+
+`receiver` 中可以使用 `abortBroadcast()` 来中断消息的进一步传递。
 
 ### ContentProvider
 
