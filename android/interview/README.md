@@ -739,9 +739,143 @@ sendOrderedBroadcast(intent, null)
 
 ### ContentProvider
 
+ContentProvider主要用于在不同的应用程序之间实现数据共享的功能，它提供了一套完整的机制，允许一个程序访问另一个程序中的数据，同时还能保证被访问数据的安全性。目前，使用ContentProvider是Android实现跨程序共享数据的标准方式。
+
+#### 动态权限申请
+
+在获取一些系统危险权限的时候，我们不仅要在 xml 中声明权限，还要进行动态权限获取。例如获取联系人列表，进行电话呼叫。
+
+1. XML 中注册权限
+
+```xml
+<uses-permission android:name="android.permission.CALL_PHONE" />
+```
+
+2. 代码中进行运行期动态获取, 依据获取结果执行对应的风险代码
+
+<img src="android/interview/resources/a_6.png" style="width:20%">
+
+```kotlin
+class CallPhoneActivity : AppCompatActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_callphone)
+        findViewById<Button>(R.id.call).setOnClickListener {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CALL_PHONE), 1)
+            } else {
+                call()
+            }
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String?>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        when (requestCode) {
+            1 -> {
+                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED)
+                    {
+                        call()
+                    } else {
+                    Toast.makeText(this, "You denied the permission", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    private fun call()  {
+        try {
+            // 使用隐式 Intent 访问对应的拨打电话的 activity
+            val intent = Intent(Intent.ACTION_CALL)
+            intent.data = Uri.parse("tel:564949")
+            startActivity(intent)
+        } catch (e: SecurityException) {
+            e.printStackTrace()
+        }
+    }
+}
+
+```
+
 #### 系统 ContentProvider
 
+我们可以获取到任何提供了 ContentProvider APP 中的数据。ContentProvider 暴露出去的服务类似于一个数据库，我们可以对数据进行增删改查等操作。下面我们以读取系统联系人为例进行展示。
+
+1. 读取联系人是一个危险权限，我们需要进行动态权限获取。同时也需要在 XML 中静态添加权限。
+
+```xml
+<uses-permission android:name="android.permission.READ_CONTACTS" />
+```
+
+2. 使用 `contentResolver` 获取对应的数据表。需要注意到是，你的 `Activity` 必须继承 `AppCompatActivity` 才会有这个成员。
+
+```kotlin
+class CallPhoneActivity : AppCompatActivity() {
+    private val contactsList = ArrayList<String>()
+    private lateinit var adapter: ArrayAdapter<String>
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_callphone)
+
+        adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, contactsList)
+
+        findViewById<ListView>(R.id.contact_list).adapter = adapter
+
+        findViewById<Button>(R.id.contact).setOnClickListener {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.READ_CONTACTS), 2)
+            } else {
+                read()
+            }
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String?>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        when (requestCode) {
+            2 -> {
+                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    read()
+                } else {
+                    Toast.makeText(this, "You denied the permission", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    private fun read() {
+        val uri = Uri.parse("content://com.android.contacts/data/phones")
+        val cursor = contentResolver.query(uri, null, null, null, null)
+        while (cursor?.moveToNext() == true) {
+            var index = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
+            val name = cursor.getString(index)
+            cursor.columnNames
+            index = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
+            val number = cursor.getString(index)
+            contactsList.add("$name:$number")
+        }
+        adapter.notifyDataSetChanged()
+        cursor?.close()
+    }
+}
+
+```
+
 #### 自定义 ContentProvider
+
+##### 实现自己的 ContentProvider
+
+
+##### 增删改查
 
 ---
 
@@ -792,9 +926,118 @@ sendOrderedBroadcast(intent, null)
 
 ### SQLite
 
-#### 数据库创建于更新
+Android 操作系统内置了 SQLite 数据库。并提供了对应的接口 `SQLiteHelper` 来进行操作。
+
+#### 数据库存储位置
+
+在 Android 中，应用创建的数据库存储在 `/data/data/your.app.package.name/databases/xxx.db`
+
+我们可以将这个 db 文件导出来，利用 `database navigator` 等工具进行查看。
+
+<img src="android/interview/resources/a_7.png" style="width:50%">
+
+#### 数据库创建与更新
+
+我们想创建自己的数据需要按照如下步骤。
+1. 继承 `SQLiteOpenHelper` 
+
+```kotlin
+// name: 数据库名称
+// version: 数据库版本
+class LionDataBaseHelper(val context: Context, name: String, version: Int) : SQLiteOpenHelper(context, name, null, version) {
+    private val createBoolTable =
+        "create table english(" +
+            "id integer primary key autoincrement," +
+            "author text," +
+            "price real," +
+            "pages integer," +
+            "name text)"
+
+    // 如果name 指定的数据库不存在，就会调用 onCreate
+    override fun onCreate(db: SQLiteDatabase?) {
+        db?.execSQL(createBoolTable)
+        Toast.makeText(context, "DB create success!", Toast.LENGTH_SHORT).show()
+    }
+
+    // 在构建 LionDataBaseHelper 实例的时候，如果 version 发生变化，那就会触发 onUpgrade。
+    // 如果是第一次创建这个数据库，那是不会调用 onUpgrade 的。
+    override fun onUpgrade(
+        db: SQLiteDatabase?,
+        oldVersion: Int,
+        newVersion: Int,
+    ) {
+        db?.execSQL("drop table if exists Book")
+        onCreate(db)
+    }
+}
+```
+
+2. 进行任意一次数据库读写操作
+
+仅仅初始化一次 DataBase 并不会创建数据库，真正创建来自于读写操作。
+
+```kotlin
+LionDataBaseHelper(this, "lion.db", 2).writableDatabase
+```
+
+3. 想更新数据库，那就在初始化的时候，传入不同的版本，需要注意的是，对于已经存在的数据库不可以降版本更新。
 
 #### 增删改查
+
+1. 增加数据
+
+```kotlin
+val db = dbHelper.writableDatabase
+val values =
+    ContentValues().apply {
+        put("name", "FirstBlood")
+        put("price", 10.3)
+        put("pages", index++)
+        put("author", "zhangsan")
+    }
+db.insert("english", null, values)
+```
+
+2. 删除数据
+
+```kotlin
+val db = dbHelper.writableDatabase
+db.delete("english", "pages > ?", arrayOf("0"))
+```
+
+3. 修改数据
+
+```kotlin
+val db = dbHelper.writableDatabase
+val values =
+    ContentValues().apply {
+        put("author", "lisi")
+    }
+db.update("english", values, "pages > ?", arrayOf("0"))
+```
+
+4. 查询数据
+
+```kotlin
+val db = dbHelper.readableDatabase
+val cursor = db.query("english", null, null, null, null, null, null)
+contactsList.clear()
+if (cursor.moveToFirst()) {
+    do {
+        var index = cursor.getColumnIndex("name")
+        val name = cursor.getString(index)
+        index = cursor.getColumnIndex("price")
+        val price = cursor.getFloat(index)
+        index = cursor.getColumnIndex("pages")
+        val pages = cursor.getInt(index)
+        index = cursor.getColumnIndex("author")
+        val author = cursor.getString(index)
+        contactsList.add("$name:$author\n$price, $pages")
+    } while (cursor.moveToNext())
+}
+adapter.notifyDataSetChanged()
+cursor.close()
+```
 
 ### LitePal 数据库框架
 
