@@ -874,8 +874,186 @@ class CallPhoneActivity : AppCompatActivity() {
 
 ##### 实现自己的 ContentProvider
 
+1. 定义自己的 ContentProvider
+下面是几个需要注意的点：
+- `authority`: 可以理解成一个 ContentProvider 的定位符，其余应用需要通过 `content://$authority/tableName` 的 uri 来找到对应的 ContentProvider
 
+- ContentProvider 是一个数据通信类，本身没有数据存储能力。我们的数据都是借助于其他模块进行存储。例如使用 SQLite 或者文件。
+
+
+```kotlin
+class LionContentProvider : ContentProvider() {
+    private val bookDir = 0
+    private val bookItem = 1
+    private val authority = "com.uiapp.lion.content.provider"
+    private var dbHelper: LionDataBaseHelper? = null
+
+    private val uriMatcher by lazy {
+        val matcher = UriMatcher(UriMatcher.NO_MATCH)
+        matcher.addURI(authority, "english", bookDir)
+        matcher.addURI(authority, "english/#", bookItem)
+        matcher
+    }
+
+    /*
+     *   初始化ContentProvider的时候调用。通常会在这里完成对数据库的创建和升级等操作，
+     *   返回true表示ContentProvider初始化成功，返回false则表示失败
+     */
+    override fun onCreate() =
+        context?.let {
+            dbHelper = LionDataBaseHelper(it, "lion.db", 2)
+            true
+        } ?: false
+
+    override fun query(
+        uri: Uri,
+        projection: Array<out String>?,
+        selection: String?,
+        selectionArgs: Array<out String>?,
+        sortOrder: String?,
+    ) = dbHelper?.let {
+        val db = it.readableDatabase
+        val cursor =
+            when (uriMatcher.match(uri)) {
+                bookDir -> db.query("english", projection, selection, selectionArgs, null, null, sortOrder)
+                bookItem -> {
+                    val bookId = uri.pathSegments[1]
+                    db.query("english", projection, "id = ?", arrayOf(bookId), null, null, sortOrder)
+                }
+                else -> null
+            }
+        cursor
+    }
+
+    override fun getType(uri: Uri) =
+        when (uriMatcher.match(uri)) {
+            bookDir -> "vnd.android.cursor.dir/vnd.com.uiapp.lion.content.provider.english"
+            bookItem -> "vnd.android.cursor.item/vnd.com.uiapp.lion.content.provider.english"
+            else -> null
+        }
+
+    override fun insert(
+        uri: Uri,
+        values: ContentValues?,
+    ) = dbHelper?.let {
+        val db = it.writableDatabase
+        val uriReturn =
+            when (uriMatcher.match(uri)) {
+                bookDir, bookItem -> {
+                    val newBookId = db.insert("english", null, values)
+                    Uri.parse("content://$authority/english/$newBookId")
+                }
+                else -> null
+            }
+        uriReturn
+    }
+
+    override fun delete(
+        uri: Uri,
+        selection: String?,
+        selectionArgs: Array<out String>?,
+    ) = dbHelper?.let {
+        val db = it.writableDatabase
+        val deletedRows =
+            when (uriMatcher.match(uri)) {
+                bookDir -> db.delete("english", selection, selectionArgs)
+                bookItem -> {
+                    val bookId = uri.pathSegments[1]
+                    db.delete("english", "id = ?", arrayOf(bookId))
+                }
+                else -> 0
+            }
+        deletedRows
+    } ?: 0
+
+    override fun update(
+        uri: Uri,
+        values: ContentValues?,
+        selection: String?,
+        selectionArgs: Array<out String>?,
+    ) = dbHelper?.let {
+        val db = it.writableDatabase
+        val updateRows =
+            when (uriMatcher.match(uri)) {
+                bookDir -> db.update("english", values, selection, selectionArgs)
+                bookItem -> {
+                    val bookId = uri.pathSegments[1]
+                    db.update("english", values, "id = ?", arrayOf(bookId))
+                }
+                else -> 0
+            }
+        updateRows
+    } ?: 0
+}
+```
+
+2. 注册自己的 ContentProvider.
+
+```xml
+<provider
+    // authorities 对应着刚才自定义 ContentProvider 的 authority
+    android:authorities="com.uiapp.lion.content.provider"
+    // 自定义类的包路径
+    android:name=".content.LionContentProvider"
+    // 是否开启
+    android:enabled="true"
+    // 是否允许被其他 APP 访问
+    android:exported="true"
+    android:grantUriPermissions="true"/>
+```
+
+3. 设置类可见性
+
+往往来说注册好自己的 ContentProvider 后，其余 APP 就可以使用了。但是在 API 版本大于11后，Android整了一个类可见性的机制。即除了一些系统核心应用外，其余的应用会默认对你的应用进行屏蔽。所以你要是想访问其他应用，需要进行一下配置。
+如果不配置，此时你的应用假如想读取另外一个应用的 ContentProvider 的时候，会出现 ”Failed to find provider info for 'ContentProvider'” 的报错。
+所以我们要主动的 queries 另外一个 application package name
+> https://developer.android.google.cn/training/package-visibility/declaring?hl=en
+
+```xml
+<queries>
+    <package android:name="com.uiapp.lion" />
+</queries>
+```
 ##### 增删改查
+
+```kotlin
+findViewById<Button>(R.id.find).setOnClickListener {
+    val uri = Uri.parse("content://com.uiapp.lion.content.provider/english")
+    bookList.clear()
+    contentResolver.query(uri, null, null, null, null)?.apply {
+        while (moveToNext()) {
+            var index = getColumnIndex("author")
+            val author = getString(index)
+            index = getColumnIndex("name")
+            val name = getString(index)
+            index = getColumnIndex("price")
+            val price = getFloat(index)
+            index = getColumnIndex("pages")
+            val pages = getInt(index)
+            bookList.add("$name:$author\n$price:$pages")
+        }
+        close()
+    }
+    adapter.notifyDataSetChanged()
+}
+
+findViewById<Button>(R.id.delete).setOnClickListener {
+    val uri = Uri.parse("content://com.uiapp.lion.content.provider/english")
+    contentResolver.delete(uri, "name = ?", arrayOf("NewBee"))
+}
+
+findViewById<Button>(R.id.add).setOnClickListener {
+    val uri = Uri.parse("content://com.uiapp.lion.content.provider/english")
+    val values = contentValuesOf("name" to "NewBee", "author" to "Mike", "price" to 12.3, "pages" to 250)
+    contentResolver.insert(uri, values)
+}
+
+findViewById<Button>(R.id.change).setOnClickListener {
+    val uri = Uri.parse("content://com.uiapp.lion.content.provider/english")
+    val values = contentValuesOf("name" to "OldBee")
+    contentResolver.update(uri, values, "name = ?", arrayOf("NewBee"))
+}
+```
 
 ---
 
