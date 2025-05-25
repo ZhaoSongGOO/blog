@@ -1,5 +1,7 @@
 # AOSP
 
+> 本文总阅读量 <span id="busuanzi_value_page_pv"><i class="fa fa-spinner fa-spin"></i></span>次
+
 <!-- 每一个链接必须从根目录开始，其次后面必须以 / 结尾，例如你必须写 aosp/base/ 而不是 aosp/base  -->
 ## [Basic knowledge](aosp/base/)
 

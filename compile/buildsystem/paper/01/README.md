@@ -1,5 +1,7 @@
 # 构建系统组装：理论与实践
 
+> 本文总阅读量 <span id="busuanzi_value_page_pv"><i class="fa fa-spinner fa-spin"></i></span>次
+
 > [原文链接](https://www.cambridge.org/core/journals/journal-of-functional-programming/article/build-systems-a-la-carte-theory-and-practice/097CE52C750E69BD16B78C318754C7A4)
 
 ## Abstract

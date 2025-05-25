@@ -1,5 +1,6 @@
 # Android 面试知识点
 
+> 本文总阅读量 <span id="busuanzi_value_page_pv"><i class="fa fa-spinner fa-spin"></i></span>次
 --- 
 
 ## 四大组件

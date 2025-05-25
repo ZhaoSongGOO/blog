@@ -1,5 +1,7 @@
 # Getting Started to Mastery in Chromium
 
+> 本文总阅读量 <span id="busuanzi_value_page_pv"><i class="fa fa-spinner fa-spin"></i></span>次
+
 This is an introduction to the learning route of Chromium. I believe that when learning anything, speed is essential. 
 One must never procrastinate or give oneself too much time. Next, we will use a period of two months to help you gain a deeper understanding of Chromium.  
 
