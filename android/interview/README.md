@@ -1064,11 +1064,84 @@ findViewById<Button>(R.id.change).setOnClickListener {
 
 #### 线性布局
 
-#### 帧布局
+线性布局中，所有的 UI 按照水平或者垂直的方向按序排列。
+
+<img src="android/interview/resources/a_8.png" style="width:20%">
 
 #### 相对布局
 
+相对布局默认会将所有的子视图堆叠在左上方展示，你可以使用一系列的操作来调整子视图之间以及子视图与父视图之间的位置关系。
+
+<img src="android/interview/resources/a_9.png" style="width:10%">
+
+#### 帧布局
+
+帧布局，将所有的元素按照声明是从上到下的顺序叠加显示。类似于图层的概念。
+
+#### 网格布局
+
+GridLayout 是 Android 中的一种布局管理器，用于在网格形式的布局中排列子视图。通过 GridLayout，可以将子视图按行和列的方式排列在屏幕上，类似于表格布局。每个子视图可以占据一个或多个网格单元格，从而实现灵活的布局。
+
+<img src="android/interview/resources/a_10.png" style="width:50%">
+
+```xml
+        <GridLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:rowCount="3"
+            android:columnCount="2"
+            android:background="@drawable/black_shape">
+                <Button
+                    android:layout_width="100dp"
+                    android:layout_height="20dp"
+                    android:text="Button 1"
+                    android:background="@color/green"
+                    android:layout_row="0"
+                    android:layout_column="0"
+                    />
+
+                <Button
+                    android:layout_width="100dp"
+                    android:layout_height="20dp"
+                    android:text="Button 2"
+                    android:background="@color/red"
+                    android:layout_row="0"
+                    android:layout_column="1"
+                    />
+                <Button
+                    android:layout_width="100dp"
+                    android:layout_height="20dp"
+                    android:text="Button 3"
+                    android:background="@color/red"
+                    android:layout_row="1"
+                    android:layout_column="0"
+                    />
+                <Button
+                    android:layout_width="100dp"
+                    android:layout_height="20dp"
+                    android:text="Button 4"
+                    android:background="@color/green"
+                    android:layout_row="1"
+                    android:layout_column="1"
+                    />
+
+                <Button
+                    android:layout_width="200dp"
+                    android:layout_height="20dp"
+                    android:text="Button 5"
+                    android:background="@color/green"
+                    android:layout_row="2"
+                    android:layout_column="0"
+                    android:layout_columnSpan="2"
+                    />
+        </GridLayout>
+```
+
 #### 约束布局
+
+<img src="android/interview/resources/a_11.png" style="width:50%">
+
+它允许开发者通过设置视图之间的约束关系来定义视图的位置和大小，从而实现灵活性和性能的最佳平衡。
 
 --- 
 
