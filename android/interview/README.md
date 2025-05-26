@@ -1147,6 +1147,10 @@ GridLayout 是 Android 中的一种布局管理器，用于在网格形式的布
 
 ## 自定义 View 及 ViewGroup
 
+### View 的 Measure 、Layout 、Draw 流程分析
+
+[流程分析](android/interview/view-mld/)
+
 ### 自定义 View
 
 ### 自定义 ViewGroup
