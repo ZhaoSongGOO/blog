@@ -1548,12 +1548,7 @@ Retrofit 是一个高层的网络客户端工具，底层可以基于 OkHttp 以
 
 ## MVC、MVP、MVVM
 
-### MVC
-
-### MVP
-
-### MVVM
-
+[MVC、MVP、MVVM](android/interview/mvc/)
 
 --- 
 
