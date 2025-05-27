@@ -1307,7 +1307,217 @@ cursor.close()
 
 ### OkHttp 网络框架
 
+#### 基本 GET 请求
+
+```java
+OkHttpClient client = new OkHttpClient();
+
+Request request = new Request.Builder()
+    .url("https://api.example.com/data")
+    .build();
+
+try (Response response = client.newCall(request).execute()) {
+    if (!response.isSuccessful()) throw new IOException("Unexpected code " + response);
+    
+    String responseData = response.body().string();
+    System.out.println(responseData);
+}
+```
+
+#### 异步 GET 请求
+
+```java
+OkHttpClient client = new OkHttpClient();
+
+Request request = new Request.Builder()
+    .url("https://api.example.com/data")
+    .build();
+
+client.newCall(request).enqueue(new Callback() {
+    @Override
+    public void onFailure(Call call, IOException e) {
+        e.printStackTrace();
+    }
+
+    @Override
+    public void onResponse(Call call, Response response) throws IOException {
+        try (ResponseBody responseBody = response.body()) {
+            if (!response.isSuccessful()) throw new IOException("Unexpected code " + response);
+            
+            String responseData = responseBody.string();
+            System.out.println(responseData);
+        }
+    }
+});
+```
+
+#### POST 请求
+
+1. 发送表单数据
+
+```java
+OkHttpClient client = new OkHttpClient();
+
+RequestBody formBody = new FormBody.Builder()
+    .add("username", "user123")
+    .add("password", "secret")
+    .build();
+
+Request request = new Request.Builder()
+    .url("https://api.example.com/login")
+    .post(formBody)
+    .build();
+
+try (Response response = client.newCall(request).execute()) {
+    // 处理响应
+}
+```
+
+2. 发送 JSON 数据
+
+```java
+OkHttpClient client = new OkHttpClient();
+
+String json = "{\"name\":\"John\", \"age\":30}";
+RequestBody body = RequestBody.create(
+    json, 
+    MediaType.get("application/json; charset=utf-8")
+);
+
+Request request = new Request.Builder()
+    .url("https://api.example.com/users")
+    .post(body)
+    .build();
+
+try (Response response = client.newCall(request).execute()) {
+    // 处理响应
+}
+```
+
+3. 发送文件
+
+```java
+OkHttpClient client = new OkHttpClient();
+
+RequestBody requestBody = new MultipartBody.Builder()
+    .setType(MultipartBody.FORM)
+    .addFormDataPart("title", "My File")
+    .addFormDataPart("file", "file.txt",
+        RequestBody.create(new File("path/to/file.txt"), 
+        MediaType.get("text/plain")))
+    .build();
+
+Request request = new Request.Builder()
+    .url("https://api.example.com/upload")
+    .post(requestBody)
+    .build();
+
+try (Response response = client.newCall(request).execute()) {
+    // 处理响应
+}
+```
+
+#### 添加请求头
+
+```java
+Request request = new Request.Builder()
+    .url("https://api.example.com/data")
+    .header("Authorization", "Bearer token123")
+    .addHeader("User-Agent", "MyApp/1.0")
+    .build();
+```
+
+#### 使用 Cookie
+
+```java
+CookieJar cookieJar = new CookieJar() {
+    private final HashMap<String, List<Cookie>> cookieStore = new HashMap<>();
+
+    @Override
+    public void saveFromResponse(HttpUrl url, List<Cookie> cookies) {
+        cookieStore.put(url.host(), cookies);
+    }
+
+    @Override
+    public List<Cookie> loadForRequest(HttpUrl url) {
+        List<Cookie> cookies = cookieStore.get(url.host());
+        return cookies != null ? cookies : new ArrayList<Cookie>();
+    }
+};
+
+OkHttpClient client = new OkHttpClient.Builder()
+    .cookieJar(cookieJar)
+    .build();
+```
+
+#### 使用拦截器
+
+```java
+// 自定义拦截器
+class LoggingInterceptor implements Interceptor {
+    @Override
+    public Response intercept(Chain chain) throws IOException {
+        Request request = chain.request();
+        
+        long t1 = System.nanoTime();
+        System.out.println(String.format("Sending request %s on %s%n%s",
+            request.url(), chain.connection(), request.headers()));
+
+        Response response = chain.proceed(request);
+        
+        long t2 = System.nanoTime();
+        System.out.println(String.format("Received response for %s in %.1fms%n%s",
+            response.request().url(), (t2 - t1) / 1e6d, response.headers()));
+            
+        return response;
+    }
+}
+
+// 使用拦截器
+OkHttpClient client = new OkHttpClient.Builder()
+    .addInterceptor(new LoggingInterceptor())
+    .build();
+```
+
+#### WebSocket
+
+```java
+OkHttpClient client = new OkHttpClient();
+
+Request request = new Request.Builder()
+    .url("wss://echo.websocket.org")
+    .build();
+
+WebSocket webSocket = client.newWebSocket(request, new WebSocketListener() {
+    @Override
+    public void onOpen(WebSocket webSocket, Response response) {
+        System.out.println("WebSocket opened");
+        webSocket.send("Hello WebSocket!");
+    }
+
+    @Override
+    public void onMessage(WebSocket webSocket, String text) {
+        System.out.println("Received message: " + text);
+    }
+
+    @Override
+    public void onClosed(WebSocket webSocket, int code, String reason) {
+        System.out.println("WebSocket closed");
+    }
+
+    @Override
+    public void onFailure(WebSocket webSocket, Throwable t, Response response) {
+        t.printStackTrace();
+    }
+});
+
+// 关闭WebSocket
+// webSocket.close(1000, "Goodbye!");
+```
+
 ### Retrofit 网络框架
+
+Retrofit 是一个高层的网络客户端工具，底层可以基于 OkHttp 以及其他的网络库完成网络请求。
 
 
 --- 
