@@ -581,6 +581,7 @@ fun main() {
 <img src="android/interview/resources/a_4.png" style="width:30%">
 
 2. sendMessage
+
 ```kotlin
 var mThread =
     thread {
