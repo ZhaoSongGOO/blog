@@ -88,6 +88,105 @@ void doTraversal() {
 触发后的回调会被队列移除，也就是说，如果我们在一帧之内没有做任何 UI 相关操作，那下一次 VSync 来的时候，就不会触发 UI 遍历操作。
 
 
+## 布局研究范围
+
+我们在开发的过程中，会在布局 XML 文件中或者在代码中手动进行 UI 增删以及属性设置。这些 UI 属于我们用户自定义的部分，但是在一个 `Activity` 中展示的 UI 除了用户自定义的部分，还包括一部分系统默认设置的组件。本小节我们就看一下系统默认增加了哪些内容，从而进一步明确在一次绘制过程中我们到底需要针对于哪些 UI 去做测算。
+
+### 树根 DecorView
+
+`DecorView` 是整个 `Activity` 视图树的根容器，从上面的类继承层次也可以看到，它是一个 `FrameLayout` 的子类。下面展示了相关的几个类的关系。
+
+<img src="android/interview/view-mld/resources/mld_5.png" style="width:100%">
+
+1. 创建
+
+在每一个 `Activity` 创建的时候，会创建一个对应的 `PhoneWindow` 对象，这个 对象会创建一个 `DecorView` 对象。
+
+```java
+// Activity.java construct
+mWindow = new PhoneWindow(this, window, activityConfigCallback);
+
+// PhoneWindow.java construct
+mDecor = (DecorView) preservedWindow.getDecorView();
+```
+
+2. 添加
+
+我们在每个 `Activity` 的 `onCreate` 方法中使用 `setContentView` 加载我们的布局文件。在这个过程中，`Activity` 直接转到 `Window` 对象的 `setContentView` 方法。将 XML 对应的布局 id 作为孩子绑定在 DecorView 视图上。
+
+```java
+// PhonwWindow.java
+public void setContentView(int layoutResID) {
+        // 如果没有 DecorView 或者没有生成 DecorView 的 布局 id，就 install 一下。
+        if (mContentParent == null) {
+            installDecor();
+        } else if (!hasFeature(FEATURE_CONTENT_TRANSITIONS)) {
+            mContentParent.removeAllViews();
+        }
+
+        if (hasFeature(FEATURE_CONTENT_TRANSITIONS)) {
+            final Scene newScene = Scene.getSceneForLayout(mContentParent, layoutResID,
+                    getContext());
+            transitionTo(newScene);
+        } else {
+            // 把 xml 的布局作为孩子添加到 decorView 上
+            mLayoutInflater.inflate(layoutResID, mContentParent);
+        }
+}
+```
+
+3. 关联
+
+在上面我们分析触发的时候，提到了 `ViewRootImpl` 对象，这个对象承载了监听 VSync 回调，并对视图树进行遍历操作的责任。所以我们需要将以 `DecorView` 为根的这棵树与 `ViewRootImpl` 进行关联。
+
+`Activity` 在变的可见的时候，会通过 `PhoneWindow` 对象调用到 `WindowManagerImpl`, 并将刚才创建的 `DecorView` 传入。 进而在一个全局单例 `WindowManagerGlobal` 中创建 `ViewRootImpl`, 同时将传入的 `DecorView` 与 `ViewRootImpl` 进行绑定。
+
+```java
+// Activity.java
+void makeVisible() {
+    if (!mWindowAdded) {
+        ViewManager wm = getWindowManager();
+        wm.addView(mDecor, getWindow().getAttributes());
+        mWindowAdded = true;
+    }
+    mDecor.setVisibility(View.VISIBLE);
+}
+
+// WindowManagerImpl.java
+public void addView(@NonNull View view, @NonNull ViewGroup.LayoutParams params) {
+    applyTokens(params);
+    mGlobal.addView(view, params, mContext.getDisplayNoVerify(), mParentWindow,
+            mContext.getUserId());
+}
+
+// WindowManagerGlobal.java
+// addView function
+// 创建 ViewRootImpl
+if (windowlessSession == null) {
+    root = new ViewRootImpl(view.getContext(), display);
+} else {
+    root = new ViewRootImpl(view.getContext(), display,
+            windowlessSession, new WindowlessWindowLayout());
+}
+view.setLayoutParams(wparams);
+// 统一记录
+mViews.add(view);
+mRoots.add(root);
+mParams.add(wparams);
+// do this last because it fires off messages to start doing things
+try {
+// 绑定
+    root.setView(view, wparams, panelParentView, userId);
+} catch (RuntimeException e) {
+    final int viewIndex = (index >= 0) ? index : (mViews.size() - 1);
+    // BadTokenException or InvalidDisplayException, clean up.
+    if (viewIndex >= 0) {
+        removeViewLocked(viewIndex, true);
+    }
+    throw e;
+}
+```
+
 
 
 
