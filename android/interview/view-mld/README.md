@@ -5,7 +5,7 @@
 
 ## View 类继承体系
 
-<img src="android/interview/view-mld/resources/mld_1.png" style="width:70%">
+<img src="android/interview/view-mld/resources/mld_1.png" style="width:50%">
 
 
 
@@ -152,12 +152,20 @@ void makeVisible() {
     mDecor.setVisibility(View.VISIBLE);
 }
 
+```
+
+```java
+
 // WindowManagerImpl.java
 public void addView(@NonNull View view, @NonNull ViewGroup.LayoutParams params) {
     applyTokens(params);
     mGlobal.addView(view, params, mContext.getDisplayNoVerify(), mParentWindow,
             mContext.getUserId());
 }
+
+```
+
+```java
 
 // WindowManagerGlobal.java
 // addView function
@@ -187,6 +195,48 @@ try {
 }
 ```
 
+### 手机屏幕的组成
+
+<img src="android/interview/view-mld/resources/mld_4.png" style="width:20%"><img src="android/interview/view-mld/resources/mld_6.png" style="width:60%">
+
+上文提到，我们一个 Activity 的 UI 树根节点是 DecorView，其本质是一个 FrameLayout，其内部直接持有一个 LinearLayout 布局，这个布局中，从上到下添加了 StatusBar 、TiTleBar、Content(FrameLayout)、NavigationBar 等组件。
+
+- StatusBar: 用来显示电量 、时间、网络状态等内容，由系统管理，不参与 UI 排版。
+- TitleBar: 有时候也叫 ActionBar，用来展示 Activity 的标题， 本身是一个FrameLayout，我们一般可以手动设置展示或者隐藏。会参与 UI 排版。
+- Content: 用来盛放用户页面数据的容器，本身也是一个FrameLayout，其子视图才是XML文件中写的内容，这部分参与 UI 排版。
+- NavigationBar: 导航栏，系统控制，不参与排版。以前用来盛放返回键 、Home 键等UI。现在基本已经被手势操作取代了。
+
+### UI 渲染简化
+
+为了更方便的分析 UI 渲染过程，我们做出如下假设以简化 UI 树结构。
+
+1. 我们的 UI 没有 TitleBar.
+2. 我们的 XML 文件相对比较简单。
+
+```xml
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+    <TextView
+        android:layout_height="wrap_content"
+        android:layout_width="wrap_content"
+        android:background="#ff0000"
+        android:text="hello"/>
+    <Button
+        android:layout_height="wrap_content"
+        android:layout_width="wrap_content"
+        android:background="#00ff00"
+        android:text="Submit"/>
+</LinearLayout>
+```
+
+在此假设下，我们的 UI 树变成如下的样子：
+
+<img src="android/interview/view-mld/resources/mld_7.png" style="width:25%">
 
 
+## Measure 启动！
 
+## Layout 启动！
+
+## Draw 启动！
