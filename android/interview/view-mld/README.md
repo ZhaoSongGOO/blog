@@ -63,11 +63,11 @@ void requestLayout(){
 }
 ```
 
-因为上面有避免重入机制，所以我们在一帧之内的重复 requestLayout 只会注册一次回调。同时设置同步屏障，可以确保 UI 遍历的操作不会被其他非异步任务阻塞。
+因为上面有避免重入机制，所以我们在一帧之内的重复 `requestLayout` 只会注册一次回调。同时设置同步屏障，可以确保 UI 遍历的操作不会被其他非异步任务阻塞。
 
 ### 回调被触发
 
-在收到 VSync 信号后，回调被触发，触发后，关掉标志位，同时关闭同步屏障。但是你要知道，此时正在运行的任务就是 UI 遍历任务。所以移除了也不会被其他任务占用。
+在收到 `VSync` 信号后，回调被触发，触发后，关掉标志位，同时关闭同步屏障。但是你要知道，此时正在运行的任务就是 UI 遍历任务。所以移除了也不会被其他任务占用。
 
 ```java
 // ViewRootImpl.java
@@ -85,7 +85,18 @@ void doTraversal() {
 
 ### 触发后呢？
 
-触发后的回调会被队列移除，也就是说，如果我们在一帧之内没有做任何 UI 相关操作，那下一次 VSync 来的时候，就不会触发 UI 遍历操作。
+触发后的回调会被队列移除，也就是说，如果我们在一帧之内没有做任何 UI 相关操作，那下一次 `VSync` 来的时候，就不会触发 UI 遍历操作。
+
+### 如果我们在一帧内发起多次 requestLayout 会发生什么？
+
+设想如下的场景，我连续快速的修改了一个 UI 的宽度，每一次修改会触发一次布局请求，但是从上面的情况可以得知，只有第一次的 `requestLayout` 对应的 `scheduleTraversals` 才会被注册 `callback`。也就是说在 `VSync` 到来后，只会触发一次遍历操作。那第二次的宽度更改操作会生效吗？
+
+```java
+ui.width = 100dp;
+ui.width = 200dp;
+```
+
+会的！虽然只有第一次的 尺寸变更会触发回调注册，但是两次的宽度数据都会被设置到 UI 属性上，而且第二次的 `200dp` 会覆盖第一次的 `100dp`，即丢弃了第一次的变更数据。
 
 
 ## 布局研究范围
@@ -199,18 +210,18 @@ try {
 
 <img src="android/interview/view-mld/resources/mld_4.png" style="width:20%"><img src="android/interview/view-mld/resources/mld_6.png" style="width:60%">
 
-上文提到，我们一个 Activity 的 UI 树根节点是 DecorView，其本质是一个 FrameLayout，其内部直接持有一个 LinearLayout 布局，这个布局中，从上到下添加了 StatusBar 、TiTleBar、Content(FrameLayout)、NavigationBar 等组件。
+上文提到，我们一个 `Activity` 的 UI 树根节点是 `DecorView`，其本质是一个 `FrameLayout`，其内部直接持有一个 `LinearLayout` 布局，这个布局中，从上到下添加了 `StatusBar` 、`TiTleBar`、`Content`(FrameLayout)、`NavigationBar` 等组件。
 
-- StatusBar: 用来显示电量 、时间、网络状态等内容，由系统管理，不参与 UI 排版。
-- TitleBar: 有时候也叫 ActionBar，用来展示 Activity 的标题， 本身是一个FrameLayout，我们一般可以手动设置展示或者隐藏。会参与 UI 排版。
-- Content: 用来盛放用户页面数据的容器，本身也是一个FrameLayout，其子视图才是XML文件中写的内容，这部分参与 UI 排版。
-- NavigationBar: 导航栏，系统控制，不参与排版。以前用来盛放返回键 、Home 键等UI。现在基本已经被手势操作取代了。
+- `StatusBar`: 用来显示电量 、时间、网络状态等内容，由系统管理，不参与 UI 排版。
+- `TitleBar`: 有时候也叫 `ActionBar`，用来展示 `Activity` 的标题， 本身是一个 `FrameLayout`，我们一般可以手动设置展示或者隐藏。会参与 UI 排版。
+- `Content`: 用来盛放用户页面数据的容器，本身也是一个 `FrameLayout`，其子视图才是XML文件中写的内容，这部分参与 UI 排版。
+- `NavigationBar`: 导航栏，系统控制，不参与排版。以前用来盛放返回键 、Home 键等UI。现在基本已经被手势操作取代了。
 
 ### UI 渲染简化
 
 为了更方便的分析 UI 渲染过程，我们做出如下假设以简化 UI 树结构。
 
-1. 我们的 UI 没有 TitleBar.
+1. 我们的 UI 没有 `TitleBar`.
 2. 我们的 XML 文件相对比较简单。
 
 ```xml
