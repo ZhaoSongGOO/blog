@@ -509,4 +509,64 @@ case MeasureSpec.UNSPECIFIED:
 
 ## Layout 启动！
 
+`layout` 是整个布局过程的第二阶段，在这个阶段，每一个父容器会调用它的孩子的 `layout` 方法以去定位它们。这阶段会使用一些 `measure` 阶段获取到的一些结果作为辅助。
+
+### layout 关键方法
+
+和 measure 一样，我们先介绍几个和 layout 相关的关键 api。
+
+1. layout
+
+`layout` 方法和 `measure` 不同，不是一个 final 的方法，可以被子类重写，但是一般而言，并不希望子类重写这个方法，如果有需要，还是尽可能的重写 `onLayout` 来实现。
+
+```java
+// View.java
+public void layout(int l, int t, int r, int b) {
+    //...
+    boolean changed = isLayoutModeOptical(mParent) ?
+                setOpticalFrame(l, t, r, b) : setFrame(l, t, r, b);
+    onLayout(changed, l, t, r, b);
+    //...
+}
+```
+
+`layout` 方法接收四个参数，如下图所示，分别代表子视图在父容器坐标系中的上右下左四个距离。
+
+<img src="android/interview/view-mld/resources/mld_10.png" style="width:20%">
+
+随后 `layout` 会使用 setXXXFrame 函数来设置自己的位置，随后调用 onLayout。在调用 onLayout 的时候，会额外传入一个 changed 的参数，这个参数来自于 setXXXFrame 的返回，代表当前视图的位置有没有变更，可以更具需要，选择是否需要执行 onLayout 的实际定位逻辑。
+
+2. onLayout
+
+`onLayout` 和 `onMeasure` 一样，是 Android 测绘系统提供给我们的灵活性，可以看到，View 默认只是提供了空实现。我们可以在自定义 View 或者 自定义的容器内部重写 onLayout 方法来实现自己的定位逻辑。
+
+```java
+// View.java
+/**
+ * Called from layout when this view should
+ * assign a size and position to each of its children.
+ *
+ * Derived classes with children should override
+ * this method and call layout on each of
+ * their children.
+ * @param changed This is a new size or position for this view
+ * @param left Left position, relative to parent
+ * @param top Top position, relative to parent
+ * @param right Right position, relative to parent
+ * @param bottom Bottom position, relative to parent
+ */
+protected void onLayout(boolean changed, int left, int top, int right, int bottom) {}
+```
+
+### layout 流程分析
+
+<img src="android/interview/view-mld/resources/mld_11.png" style="width:100%">
+
+1. 和 `performMeasure` 一样，`performLayout` 在其之后被触发。
+2. 调用 `DecorView` 的 `layout` 方法，传入的参数为 `(0, 0, mDecorView.getMeasuredWidth, mDecorView.getMeasuredHeight)`
+3. `DecorView` 的 `layout` 一路向上调用到 `View`，再由 `View` 触发 `onLayout` 调用，这个方法被 DecorView 重写。
+4. `DecorView` 调用了父类，也就是 `FrameLayout` 的 `onLayout` 方法，在 `FrameLayout` 中会对自己的孩子依次计算位置，调用 `childView.layout`。
+
+
+
 ## Draw 启动！
