@@ -248,6 +248,265 @@ try {
 
 ## Measure 启动！
 
+### 布局整体流程图
+
+<img src="android/interview/view-mld/resources/mld_8.png" style="width:100%">
+
+Android 的所有 UI 组成了一个树结构，并在每个 VSync 到来的时候，如果有需要就以广度优先遍历的方式对整个 UI 树进行测算。在每一个测算的过程(函数)中，每一种不同的容器组件或者具体的视图组件都会做不同的测算处理，这里面涉及了非常多的细节和边界情况，为了避免陷入困惑，我们暂时不去考虑这些特殊的逻辑，从关键流程和关键输入输出来描述整个过程。
+
+### 测算关键函数
+
+在讲解整个流程前，我们先看一下这个 measure 过程中关键的两个函数。
+
+
+#### `measure`
+
+用来进行 measure 操作的函数，这是一个 final 的方法，由 View 基类实现，子类无法修改。
+输入参数是父容器传递的约束条件，这只是一个建议值，当前视图可以做受限的调整。
+
+```java
+// View.java
+final void measure(int widthMeasureSpec, int heightMeasureSpec) {
+    //...
+    onMeasure(widthMeasureSpec, heightMeasureSpec);
+    //...
+}
+```
+
+#### `onMeasure`
+
+刚才提到了当前视图可以对父容器传递进来的约束条件进行受限调整，那在哪里调整呢？既然 `measure` 方法是个 final 的方法，那子类是没办法在这个方法中进行自定义以调整的。好在 `View` 提供了一个 `onMeasure` 的子类可自定义方法，我们可以在这个方法中进行 UI 尺寸的的调整与设置。同时 `View` 的 `measure` 方法确保 `onMeasure` 方法一定会被调用到。
+
+`onMeasure` 中一般按序做两件事情：
+1. 在一定的限制条件下按需计算自己的尺寸。
+
+子 View 对于尺寸的的调整不是我们想调整多少就调整多少的，如果没有按照限制去做调整，会降级到直接使用父容器的约束尺寸。
+
+<img src="android/interview/view-mld/resources/mld_9.png" style="width:40%">
+
+2. 调用 `setMeasuredDimension` 设置自己计算的结果，如果不设置，会直接抛出异常。
+
+```java
+protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+    //....
+    int finalWidth = calculateFinalWidth(...);
+    int finalHeight = calculateFinalHeight(...);
+    //....
+    // 必须调用！
+    setMeasuredDimension(finalWidth, finalHeight);
+}
+```
+
+当然子类完全可以使用 `onMeasure` 的默认定义，默认定义如下，忽略一些细节，默认的 `onMeasure` 中会判断父容器传递进来的约束条件：
+- 如果约束条件是 `UNSPECIFIED`, 那就是用建议的尺寸。(至于什么是建议的尺寸，就先不管了)
+- 如果约束条件是 `AT_MOST` 和 `EXACTLY`, 那就直接使用父容器传进来尺寸。
+
+```java
+// View.java
+protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+    setMeasuredDimension(getDefaultSize(getSuggestedMinimumWidth(), widthMeasureSpec),
+            getDefaultSize(getSuggestedMinimumHeight(), heightMeasureSpec));
+}
+
+public static int getDefaultSize(int size, int measureSpec) {
+    int result = size;
+    int specMode = MeasureSpec.getMode(measureSpec);
+    int specSize = MeasureSpec.getSize(measureSpec);
+
+    switch (specMode) {
+    case MeasureSpec.UNSPECIFIED:
+        result = size;
+        break;
+    case MeasureSpec.AT_MOST:
+    case MeasureSpec.EXACTLY:
+        result = specSize;
+        break;
+    }
+    return result;
+}
+
+```
+
+### 测算过程解析
+
+1. `VSync` 信号到达，`Choreographer` 调用 `ViewRootImpl` 注册的 UI 遍历回调。
+2. `ViewRootImpl` 收到后，调用 `doTraversals` 方法，在这个方法中如果判断确实需要重新计算，那就再一次调用 `performTraversals` 方法。
+3. `performTraversals` 获取到 `rootMeasureSpec`，然后用这个 root 的 measure 参数调用 `performMeasure` 方法
+> `rootMeasureSpec` 包括 `childWidthMeasureSpec` 和 `childHeightMeasureSpec`:
+> `childWidthMeasureSpec`: value = window_width, mode = EXACTLY
+> `childHeightMeasureSpec`: value = window_height, mode = EXACTLY
+4. `performMeasure` 做了简单的操作后，以 `rootMeasureSpec` 为参数直接调用 `decorView.measure` 方法。刚才提供了 `measure` 是 final 的，由 `View` 来实现。
+5. `View` 在 `measure` 执行中，调用 `onMeasure` 方法，这个会调用到 `DecorView` 的 `onMeasure` 方法。
+6. `DecorView` 本身是一个 `FrameLayout` 的子类，它在自己的 `onMeasure` 中做了一些简单的操作后，就调用了父类(`FrameLayout`)的 `onMeasure` 方法。
+7. `FrameLayout` 的 `onMeasure` 方法非常的复杂，充斥着各种情况的判断，但是整体上是按序遍历自己的孩子，生成孩子的约束，并依次调用 `childView.measure` 方法。之前的研究范围一节中，我们说了 `DecorView`` 的直接子孩子是一个 LinearLayout`。所以上一步中 `childView` 本身是一个 `LinearLayout` 对象。
+8. 同样的 `LinearLayout` 的 `measure` 从 `View` 那里转了一圈又回到了自己的 `onMeasure` 方法中。线性布局分为水平和垂直两个方向，所以有下面两个不同的处理逻辑，这里我们就以垂直布局为例继续分析 `measureVertical`。
+
+```java
+protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+    if (mOrientation == VERTICAL) {
+        measureVertical(widthMeasureSpec, heightMeasureSpec);
+    } else {
+        measureHorizontal(widthMeasureSpec, heightMeasureSpec);
+    }
+}
+```
+9. 在这个 `measureVertical` 中，和 `FrameLayout` 一样，也是进行了按序遍历自己的孩子，生成孩子的约束，并依次调用 `childView.measure` 方法三个步骤。
+10. 接下来就调用到我们承载用户 XML 视图的容器 Content 了，整理流程如上，就不一一赘述了。
+
+### 孩子约束生成策略
+
+在容器组件的 `onMeasure` 中，一般会有三个步骤：
+
+1. 进行自己的布局处理。
+2. 生成孩子约束条件。
+3. 使用孩子的约束条件作为参数，调用 `childView.measure` 方法。
+
+这里1和3没什么多说的，暂时也看不明白。但是生成孩子约束这块我们可以稍微的了解一下，这有助于帮助我们对于写 XML 时的属性做更深层次的理解。
+
+"Does the hard part of measureChildren" 这句话出现在 `getChildMeasureSpec` 这个函数的注释中，但是这个函数在逻辑上来看非常的清晰，不是多么困难。
+
+#### 接收参数
+
+```java
+public static int getChildMeasureSpec(int spec, int padding, int childDimension) {
+    // 函数实现...
+}
+```
+
+1. `spec` 当前容器的测量约束。即子视图的宽高约束可能会受到父容器宽高约束的影响。再次强调，当前容器的约束，不是当前容器对孩子的约束。
+2. `padding` 当前容器的内边距。
+3. `childDimension` 子视图的尺寸需求。这里需要补充一下 `measureSpec` 与 `dimension` 的区别。
+
+##### MeasureSpec 与 dimension
+
+`MeasureSpec` 是一个 Android 布局过程中父组件对于当前 UI 进行宽高进行约束的综合属性。他是一个 32 位的整数，其中 2 位拿来存储宽高模式 mode，30 位拿来记录宽高的具体数值 size。
+
+下面列举了约束的三个模式：
+
+- UNSPECIFIED: 父组件对你没约束，你爱多大多大。
+- EXACTLY: 父组件要求你是指定的尺寸。
+- AT_MOST: 父组件给你个最大的尺寸，你可以在这个范围内随意调整。
+
+```java
+// View.java:public static class MeasureSpec
+/**
+ * Measure specification mode: The parent has not imposed any constraint
+ * on the child. It can be whatever size it wants.
+ */
+public static final int UNSPECIFIED = 0 << MODE_SHIFT;
+
+/**
+ * Measure specification mode: The parent has determined an exact size
+ * for the child. The child is going to be given those bounds regardless
+ * of how big it wants to be.
+ */
+public static final int EXACTLY     = 1 << MODE_SHIFT;
+
+/**
+ * Measure specification mode: The child can be as large as it wants up
+ * to the specified size.
+ */
+public static final int AT_MOST     = 2 << MODE_SHIFT;
+```
+
+`dimension` 的原始类型是 `LayoutParams` 的一个字段 `width` 和  `height`，其是由 XML 中我们设置的 `layout_widhth` 和 `layout_height` 属性转换而来，其有三种原始类型。
+
+- MATCH_PARENT: 标明当前组件的尺寸想和父组件尽可能一样大。
+- WRAP_CONTENT: 标明当前组件想调整自己的尺寸去容纳自己内部元素。
+- 大于等于0的具体值: 我们一般会使用 `layout_width:100dp` 这样的方式来直接设置具体的尺寸。
+
+```java
+/**
+ * Special value for the height or width requested by a View.
+ * MATCH_PARENT means that the view wants to be as big as its parent,
+ * minus the parent's padding, if any. Introduced in API Level 8.
+ */
+public static final int MATCH_PARENT = -1;
+
+/**
+ * Special value for the height or width requested by a View.
+ * WRAP_CONTENT means that the view wants to be just large enough to fit
+ * its own internal content, taking its own padding into account.
+ */
+public static final int WRAP_CONTENT = -2;
+```
+
+#### 测算流程
+
+在这个函数中，会依据传入的 `spec` 值来分场景进行子视图测算。
+
+##### spec 为 EXACTLY
+
+父容器约束条件为 EXACTLY， 即父容器拥有一个具体的数值。
+
+- 孩子在 XML 中设置了具体的尺寸，那孩子的约束条件就是 EXACTLY， 尺寸为 XML 中设定的数值。
+- 孩子在 XML 设置的是 match_parent, 因为父容器尺寸是固定的，所以直接把孩子的约束条件设置成 EXACTLY，尺寸等于父容器尺寸。
+- 还在在 XML 设置的是 wrap_content, 想依据自己的内容来调整，但是因为父容器是固定尺寸，所以孩子的约束条件设置成 AT_MOST，且最大尺寸上限为父容器尺寸。
+> 这就说明子视图只能在父容器尺寸范围内进行尺寸调整以实现 wrap_content。
+
+```java
+case MeasureSpec.EXACTLY:
+    if (childDimension >= 0) {
+        resultSize = childDimension;
+        resultMode = MeasureSpec.EXACTLY;
+    } else if (childDimension == LayoutParams.MATCH_PARENT) {
+        // Child wants to be our size. So be it.
+        resultSize = size;
+        resultMode = MeasureSpec.EXACTLY;
+    } else if (childDimension == LayoutParams.WRAP_CONTENT) {
+        // Child wants to determine its own size. It can't be
+        // bigger than us.
+        resultSize = size;
+        resultMode = MeasureSpec.AT_MOST;
+    }
+    break;
+```
+
+##### spec 为 AT_MOST
+
+父容器的约束模式为 AT_MOST，意味着父容器可以在设定的上线内，动态的调整自己的尺寸。
+
+- 孩子在 XML 中设置了具体的尺寸，那孩子的约束条件就是 EXACTLY， 尺寸为 XML 中设定的数值。
+- 孩子在 XML 设置的是 match_parent, 因为父容器尺寸是有上限的，所以孩子的约束条件也被设置成 AT_MOST，而且上限为父容器的约束上限。
+- 还在在 XML 设置的是 wrap_content, 想依据自己的内容来调整，但是因为父容器也是有上限的，所以孩子的约束条件设置成 AT_MOST，而且上限为父容器的约束上限。
+
+```java
+case MeasureSpec.AT_MOST:
+    if (childDimension >= 0) {
+        resultSize = childDimension;
+        resultMode = MeasureSpec.EXACTLY;
+    } else if (childDimension == LayoutParams.MATCH_PARENT) {
+        resultSize = size;
+        resultMode = MeasureSpec.AT_MOST; // 注意不是EXACTLY!
+    } else if (childDimension == LayoutParams.WRAP_CONTENT) {
+        resultSize = size;
+        resultMode = MeasureSpec.AT_MOST;
+    }
+    break;
+```
+
+##### spec 为 UNSPECIFIED
+
+父容器的尺寸没有被限制，想多大就多大。
+
+- 孩子在 XML 中设置了具体的尺寸，那孩子的约束条件就是 EXACTLY， 尺寸为 XML 中设定的数值。
+- 孩子在 XML 设置的是 match_parent 或者 wrap_content
+
+```java
+case MeasureSpec.UNSPECIFIED:
+    if (childDimension >= 0) {
+        resultSize = childDimension;
+        resultMode = MeasureSpec.EXACTLY;
+    } else if (childDimension == LayoutParams.MATCH_PARENT) {
+        resultSize = size; // 通常为0
+        resultMode = MeasureSpec.UNSPECIFIED;
+    } else if (childDimension == LayoutParams.WRAP_CONTENT) {
+        resultSize = size;
+        resultMode = MeasureSpec.UNSPECIFIED;
+    }
+    break;
+```
+
 ## Layout 启动！
 
 ## Draw 启动！
