@@ -570,3 +570,48 @@ protected void onLayout(boolean changed, int left, int top, int right, int botto
 
 
 ## Draw 启动！
+
+<img src="android/interview/view-mld/resources/mld_12.png" style="width:100%">
+
+### 整体流程
+
+1. 和前面一致，在 `VSync` 触发后，`ViewRootImpl` 的遍历回调中会在 `measure` 和 `layout` 完成后，进行 `performDraw` 过程。
+2. `performDraw` 上来会判断是不是支持了硬件绘制，如果支持就走硬件绘制，否则就走软件绘制。
+3. 这里只看软件绘制，软件绘制会和上面一样，直接调用 `mDecorView` 的 `draw` 进行绘制。调用 draw 方法传入了一个 canvas 对象。
+4. draw 方法基本进行下面四个主要步骤：
+    1. drawBackground: 背景色，背景图等。
+    2. onDraw：绘制自身。
+    3. dispatchDraw：绘制自己的孩子。调用自己孩子的 draw 方法来触发。
+    4. drawForeground: 绘制前景以及装饰，例如滚动条等。
+
+### 硬绘与软绘
+
+硬绘流程：
+
+<img src="android/interview/view-mld/resources/mld_13.png" style="width:100%">
+
+1. 记录绘制命令：
+主线程遍历 View 树，生成 DisplayList（GPU 指令集合）。
+
+2. 异步执行：
+RenderThread 将 DisplayList 提交给 GPU。
+
+3. GPU 渲染：
+GPU 直接操作纹理，结果存入 GraphicBuffer。
+
+4. 合成显示：
+通过 SurfaceFlinger 合成到屏幕。
+
+
+软绘流程：
+
+<img src="android/interview/view-mld/resources/mld_14.png" style="width:100%">
+
+1. 主线程绘制：
+直接调用 View 的 draw() 方法，在 Canvas（关联 Bitmap）上绘制像素。
+
+2. 内存拷贝：
+将 Bitmap 数据拷贝到 Surface 的缓冲区。
+
+3. 阻塞提交：
+通过 Surface.unlockCanvasAndPost() 提交数据，可能阻塞主线程。
