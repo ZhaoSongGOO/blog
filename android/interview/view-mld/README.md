@@ -538,7 +538,7 @@ public void layout(int l, int t, int r, int b) {
 
 2. onLayout
 
-`onLayout` 和 `onMeasure` 一样，是 Android 测绘系统提供给我们的灵活性，可以看到，View 默认只是提供了空实现。我们可以在自定义 View 或者 自定义的容器内部重写 onLayout 方法来实现自己的定位逻辑。
+`onLayout` 和 `onMeasure` 一样，是 Android 测绘系统提供给我们的灵活性，可以看到，View 默认只是提供了空实现。我们可以在自定义 View 或者 自定义的容器内部重写 onLayout 方法来实现自己孩子节点的定位逻辑。需要注意到是，layout 方法已经做了布局位置的最终决议，onLayout 只是做了结果通知，我们无法在 onLayout 方法中更改布局结果。
 
 ```java
 // View.java
