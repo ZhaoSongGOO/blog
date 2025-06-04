@@ -1152,9 +1152,294 @@ GridLayout 是 Android 中的一种布局管理器，用于在网格形式的布
 
 [流程分析](android/interview/view-mld/)
 
-### 自定义 View
+### 继承 View
 
-### 自定义 ViewGroup
+#### 什么时候需要继承 View
+
+1. 当你需要创建视觉上完全独特、无法通过组合现有组件实现的视图时。
+2. 当你需要像素级的精确控制绘制过程时。
+3. 性能优化要求极高，且现有组件组合无法满足性能目标时。
+
+#### 特点
+
+1. 最大灵活性: 你可以绘制任何你能想象到的视觉元素。
+2. 最高控制权: 完全掌控视图的尺寸测量(onMeasure)、布局(onLayout - 对于单个View通常不需要)、绘制(onDraw)和触摸事件处理(onTouchEvent)。
+3. 最高复杂度: 需要自己处理所有细节，代码量通常较大。
+4. 性能敏感: 高效的 onDraw 实现至关重要，避免过度绘制和不必要的对象创建。
+
+#### 实现步骤
+
+1. 设置自定义 View 的属性
+
+我们自定义 View 可能和 Android 原生 View 一样，具有一些特有的属性，例如我想实现一个圆形的 View，它可能需要提供属性来让用户指定圆心和半径。
+这些属性需要我们在 `res/values/attrs.xml` 中实现。
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <declare-styleable name="Circle">
+        <attr name="circleColor" format="color" />
+        <attr name="circleRadius" format="dimension" />
+        <attr name="strokeWidth" format="dimension" />
+        <attr name="strokeColor" format="color" />
+    </declare-styleable>
+</resources>
+```
+
+2. 编写对应的 View 类
+
+编写的过程需要做几个关键点：
+- 自定义属性解析
+- onMeasure 方法编写、
+- onDraw 方法编写。
+- 在合适的地方触发布局和重绘制。
+- 对于 View 因为没有子节点，就不需要关注 onLayout 了。
+
+```kotlin
+class Circle(ctx: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0) : View(ctx, attrs, defStyleAttr) {
+    // 定义两个构造函数，第一个用于在代码重创建 Circle 对象调用。第二个用于在 xml 中引用
+    constructor(ctx: Context) : this(ctx, null, 0) {}
+    constructor(ctx: Context, attr: AttributeSet) : this(ctx, attr, 0) {}
+
+    // 创建一些内部的属性
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+
+    private var circleColor: Int = Color.RED
+    private var strokeColor: Int = Color.BLACK
+    private val Float.dp: Float
+        get() = this * resources.displayMetrics.density
+    private var circleRadius: Float = 50f.dp
+    private var strokeWidth: Float = 0f
+
+    // 在初始化块中，解析从 xml 中传入的属性
+    init {
+        context.obtainStyledAttributes(attrs, R.styleable.Circle).apply {
+            try {
+                circleColor = getColor(R.styleable.Circle_circleColor, Color.RED)
+                strokeColor = getColor(R.styleable.Circle_strokeColor, Color.BLACK)
+                circleRadius = getDimension(R.styleable.Circle_circleRadius, 50f.dp)
+                strokeWidth = getDimension(R.styleable.Circle_strokeWidth, 0f)
+            } finally {
+                recycle()
+            }
+        }
+        fillPaint.color = circleColor
+        strokePaint.color = strokeColor
+        strokePaint.strokeWidth = strokeWidth
+    }
+
+    // 重写 onMeasure 方法，完成自己的尺寸计算
+    override fun onMeasure(
+        widthMeasureSpec: Int,
+        heightMeasureSpec: Int,
+    ) {
+        val desiredSize = (2 * circleRadius + strokeWidth * 2).toInt()
+        val desiredWidth = desiredSize + paddingLeft + paddingRight
+        val desiredHeight = desiredSize + paddingTop + paddingBottom
+
+        // resolveSize 是在考虑父组件约束条件下的尺寸，相比于不考虑约束设置尺寸，拥有更好的性能和稳定性。
+        val measuredWidth = resolveSize(desiredWidth, widthMeasureSpec)
+        val measuredHeight = resolveSize(desiredHeight, heightMeasureSpec)
+
+        val minSize = Math.max(1, Math.min(measuredWidth, measuredHeight))
+
+        // 最后将我们所需的尺寸设置
+        setMeasuredDimension(minSize, minSize)
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+
+        val centerX = width / 2f
+        val centerY = height / 2f
+
+        val maxRadius = (Math.min(width, height) - paddingLeft - paddingRight) / 2f
+        val actualRadius = circleRadius.coerceAtMost(maxRadius)
+
+        // 画圆
+        canvas.drawCircle(centerX, centerY, actualRadius, fillPaint)
+
+        // 画描边
+        if (strokeWidth > 0) {
+            canvas.drawCircle(centerX, centerY, actualRadius, strokePaint)
+        }
+    }
+
+    // 提供对外设置颜色的接口，设置了颜色后，调用 invalidate 触发重绘。
+    fun setCircleColor(color: Int) {
+        circleColor = color
+        fillPaint.color = color
+        invalidate()
+    }
+
+    // 描边颜色变化后也需要触发重绘。
+    fun setStrokeColor(color: Int) {
+        strokeColor = color
+        strokePaint.color = color
+        invalidate()
+    }
+
+    // 设置圆心，因为涉及到位置的变化，我们需要触发重新排版，同时触发重绘。
+    fun setCircleRadius(radius: Float) {
+        circleRadius = radius
+        requestLayout()
+        invalidate()
+    }
+
+    // 设置边框宽度，因为涉及到位置的变化，我们需要触发重新排版，同时触发重绘。
+    fun setStrokeWidth(width: Float) {
+        strokeWidth = width
+        strokePaint.strokeWidth = width
+        requestLayout()
+        invalidate()
+    }
+}
+```
+
+3. 在 XML 中引入 自定义 View
+
+在 XML 中需要声明 app scope,以引入我们的自定义属性。
+
+```xml
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+    <com.uiapp.uitest.Circle
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        app:circleColor="#4CAF50"
+        app:circleRadius="40dp"
+        android:padding="10dp"/>
+</LinearLayout>
+```
+
+#### 为什么需要使用 resolveSize？
+
+> 这段话来自于 deepseek 的解释，我觉得非常完整，就直接摘抄了，感谢 deepseek
+
+这是一个非常核心的问题，触及到 Android 视图系统 onMeasure 阶段的本质：协商。直接设置 size（你计算出来的理想尺寸）而不考虑父布局传递进来的 MeasureSpec 约束，是导致布局错乱、性能低下甚至崩溃的常见原因。resolveSize() 或 resolveSizeAndState() 的作用就是帮你在这个协商过程中，根据父布局的约束 (MeasureSpec) 和你自身的需求，计算出最终合规且合理的尺寸。
+
+为什么不能直接设置 size？需要理解 MeasureSpec 和协商过程：
+
+1. MeasureSpec 是父布局的指令：
+当父布局（一个 ViewGroup）测量其子视图时，它会为每个子视图生成一个 MeasureSpec（一个32位整数，封装了尺寸模式和尺寸值）。
+MeasureSpec 包含两种信息：
+- 模式 (Mode):
+    - EXACTLY (精确模式)：父布局已经明确决定了子视图的大小。子视图必须使用这个尺寸。通常对应于 layout_width/layout_height 设置为具体数值 (dp) 或 match_parent。
+    - AT_MOST (最大模式)：父布局给出了一个子视图可以使用的最大尺寸。子视图不能超过这个尺寸，但可以更小。通常对应于 layout_width/layout_height 设置为 wrap_content。
+    - UNSPECIFIED (未指定模式)：父布局对子视图的大小没有任何限制。子视图可以根据自己的内容需求自由决定大小。这种情况相对少见，通常出现在 ScrollView 测量其子视图高度、AdapterView 测量 item 视图或在自定义布局的某些测量阶段。
+- 尺寸值 (Size): 与模式对应的尺寸数值（对于 EXACTLY 是精确值，对于 AT_MOST 是最大值）。
+
+2. onMeasure 的责任：响应父布局的约束
+自定义视图的 onMeasure(int widthMeasureSpec, int heightMeasureSpec) 方法的核心职责是：
+- 理解约束： 解析传入的 widthMeasureSpec 和 heightMeasureSpec，明白父布局对你的宽度和高度有什么要求（是精确值？不能超过某个最大值？还是随便你？）。
+- 计算自身需求： 根据你的视图内容（文本、图片、绘制逻辑）、内边距 (padding) 以及任何自定义逻辑，计算出一个你希望拥有的理想尺寸 (desiredSize)。
+- 协商最终尺寸： 将你的 desiredSize 与父布局的 MeasureSpec 进行协商，确定一个既满足父布局约束，又尽可能符合你自身需求的最终尺寸 (finalSize)。
+- 报告结果： 调用 setMeasuredDimension(finalWidth, finalHeight) 将协商后的最终尺寸报告给父布局系统。
+
+3. resolveSize() / resolveSizeAndState() 的作用：自动化协商
+这些辅助方法封装了上述协商过程（步骤3）的标准逻辑。你提供你的 desiredSize 和父布局的 MeasureSpec，它们根据 MeasureSpec 的模式智能地计算出 finalSize。
+协商规则：
+- MeasureSpec.EXACTLY： 父说了算！直接返回 MeasureSpec 中的 size。忽略你的 desiredSize。
+- MeasureSpec.AT_MOST： 父给了一个上限。你的 desiredSize 不能超过这个上限。返回 min(desiredSize, MeasureSpec.size)。
+- MeasureSpec.UNSPECIFIED： 父没限制。你可以按自己的意愿来。返回 desiredSize。
+resolveSizeAndState() 更进一步：它除了返回尺寸，还会返回一个状态标志（如 MEASURED_STATE_TOO_SMALL），告诉父布局“我计算的最小尺寸比 AT_MOST 给我的最大值还大，如果你能给我更多空间，我会表现得更好”。父布局（如果支持）可能利用这个信息进行二次测量。
+
+4. 不使用 resolveSize() 直接设置 size 的后果：
+- 违反 EXACTLY 约束： 如果父布局要求你必须是特定大小（比如 match_parent 或固定 100dp），你直接返回了自己的 desiredSize（比如 200dp），视图会显示为 200dp。这会破坏父布局（如 LinearLayout 权重分配、ConstraintLayout 的约束链）的布局计算，导致其他视图位置错乱或父布局自身尺寸计算错误。视图可能会重叠、超出屏幕或布局完全崩溃。
+- 违反 AT_MOST 约束： 如果父布局要求你不能超过某个尺寸（比如因为它是 wrap_content 的容器），你直接返回了一个更大的 desiredSize，视图会显示为超出父容器边界。内容被裁剪、父容器出现不必要的滚动条，或者完全破坏父容器的布局意图（例如一个 wrap_content 的 LinearLayout 变得异常巨大）。
+- 忽略 UNSPECIFIED 的机会： 虽然直接设置 size 在 UNSPECIFIED 下是安全的（因为规则就是你想多大就多大），但使用 resolveSize() 保持了代码的一致性，清晰地表达了“我考虑了约束”。
+- 代码健壮性和可维护性差： 手动实现上述 if-else 逻辑来判断 MeasureSpec 模式并计算最终尺寸是繁琐且容易出错的。resolveSize() 提供了标准、可靠且易于理解的实现。
+
+#### requestLayout 和 invalidate 机制
+
+##### invalidate 请求重绘
+
+```java
+// 标记整个视图为无效，需要重绘
+invalidate();
+
+// 指定需要重绘的矩形区域（优化性能）
+invalidate(left, top, right, bottom);
+```
+
+1. 作用
+
+- 标记视图的内容已失效，需要重新绘制
+- 只触发视图的 onDraw(Canvas) 方法
+- 不会触发测量(onMeasure)或布局(onLayout)
+
+2. 适用场景
+
+- 视图内容变化但是尺寸没有变化
+
+##### requestLayout 请求重新布局
+
+1. 作用
+- 声明视图的尺寸或位置已失效
+- 触发完整的视图树更新流程：
+    - onMeasure() → 重新计算尺寸
+    - onLayout() → 重新分配位置
+    - onDraw() → 最终重绘（如果需要）
+
+##### 那既然 requestLayout 也会触发整个管线，那我为啥还要在 requestLayout 后在调用 invalidate呢？
+
+就像这个函数一样，按照上面的分析，requestLayout 会触发完整的流程，为什么还要进行 invalidate 调用。
+
+```kotlin
+fun setStrokeWidth(width: Float) {
+    strokeWidth = width
+    strokePaint.strokeWidth = width
+    requestLayout()
+    invalidate()
+}
+```
+
+核心原因：requestLayout() 不保证触发 onDraw()
+这是最关键的区别：requestLayout() 会触发 onMeasure() 和 onLayout()，但不一定触发 onDraw()！是否重绘取决于视图系统的内部优化机制。
+
+什么时候 requestLayout 会触发 onDraw 呢？
+1. 如果视图的位置发生变化，系统会自动触发 onDraw。
+2. 如果用户手动的调用了 invalidate 标记视图为 dirty，那就会触发。
+3. 如果视图只是绘制状态变化，例如背景色变化，而此时没有尺寸变化，或者 dirty，是不会重绘的。
+
+<img src="android/interview/resources/a_12.png" style="width:30%">
+
+##### 会存在双重绘制吗？
+
+这段代码调用了 requestLayout,此时视图尺寸发生变化，会触发 onDraw，后续 invalidate 又触发一次 onDraw，这样重复绘制符合预期吗，
+```kotlin
+fun setCircleRadius(radius: Float) {
+    circleRadius = radius
+    requestLayout()
+    invalidate()
+}
+```
+
+首先，requestLayout 和 invalidate 都是提交请求而不立即执行的操作，他们提交的请求会在 VSync 到来后被做处理。也就是说大多数情况下，这两次对于绘制的请求会被合并成一次真正的绘制操作。
+
+例如下面的伪代码，当区域更改了，会触发 draw，当 inavlidate 被设置了，会触发 draw。
+
+第一种情况：发起 requestLayout后，VSync 到来，此时 invalidate 还没有发起，但是因为尺寸变化，触发一次 draw，结束本次 VSync 后，invalidate 发起，在第二次 VSync 后，因为检测到设置了 invalidate，又重新绘制了一次。
+
+第二种情况：requestLayout 和 invalidate 在同一帧内提交，那 VSync 到来后，只会触发一次 draw。
+
+```kotlin
+if(area_changed || invalidate){
+    view.draw(canvas)
+}
+```
+
+
+### 组合 View
+
+### 继承 TextView
+
+### 继承 ViewGroup
+
+### 继承 LinearLayout
 
 ---
 
