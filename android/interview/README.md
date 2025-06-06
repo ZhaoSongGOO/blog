@@ -1431,15 +1431,243 @@ if(area_changed || invalidate){
     view.draw(canvas)
 }
 ```
+### 继承 ViewGroup
+
+#### 什么时候需要继承 ViewGroup
+
+1. 我们想要实现自定义的布局形式。例如环形布局。
+2. 我们想组合 View，以便于复用。例如给 ViewGroup 挂接图片和文字组成一个图片介绍组件。
 
 
-### 组合 View
+#### 步骤
+
+1. 依然可以定义自己的属性
+
+```xml
+<declare-styleable name="CardView">
+    <attr name="imageSrc" format="reference" />
+</declare-styleable>
+```
+
+2. 实现自己的类，继承 ViewGroup
+
+下面实现了一个布局，这个布局中，上方是一个图片，中部是图片介绍，下方有个按钮，点击按钮可以关闭/显示图片介绍。其中图片和按钮都需要居中。
+
+<img src="android/interview/resources/a_13.png" style="width:30%">
+
+- 重写 onMeasure
+- 重写 onLayout
+- 一般不需要重写 onDraw
+
+```kotlin
+class CardView
+    @JvmOverloads
+    constructor(
+        context: Context,
+        attrs: AttributeSet? = null,
+        defStyleAttr: Int = 0,
+    ) : ViewGroup(context, attrs, defStyleAttr) {
+        private val imageView: ImageView
+        private val descriptionView: TextView
+        private val actionButton: Button
+
+        private var isDescriptionVisible = true
+        private var imageSelect = false
+
+        init {
+            // 设置背景和边距
+            background = ContextCompat.getDrawable(context, R.drawable.card_background)
+            setPadding(resources.getDimensionPixelSize(R.dimen.card_padding))
+
+            // 创建图片视图
+            imageView =
+                ImageView(context).apply {
+                    id = R.id.card_image
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                    setBackgroundColor(Color.parseColor("#EEEEEE"))
+                    addView(this)
+
+                    context.obtainStyledAttributes(attrs, R.styleable.CardView).apply {
+                        try {
+                            val image = getResourceId(R.styleable.CardView_imageSrc, -1)
+                            if (image != -1) {
+                                setImageResource(image)
+                            }
+                        } finally {
+                            recycle()
+                        }
+                    }
+                }
+
+            // 创建描述文本
+            descriptionView =
+                TextView(context).apply {
+                    id = R.id.card_description
+                    text = "这是一个非常有趣的自定义视图组件，包含了图片、文字介绍和交互按钮。点击下方按钮可以切换文字介绍的显示状态。"
+                    setTextColor(Color.DKGRAY)
+                    textSize = 16f
+                    setLineSpacing(0f, 1.2f)
+                    addView(this)
+                }
+
+            // 创建操作按钮
+            actionButton =
+                Button(context).apply {
+                    id = R.id.card_button
+                    text = "隐藏介绍"
+                    setTextColor(Color.WHITE)
+                    setBackgroundColor(Color.parseColor("#4CAF50"))
+                    setPadding(resources.getDimensionPixelSize(R.dimen.button_padding))
+                    addView(this)
+
+                    // 设置按钮点击事件
+                    setOnClickListener {
+                        toggleDescription()
+                    }
+                }
+        }
+
+        // 切换描述文本的可见性
+        private fun toggleDescription() {
+            isDescriptionVisible = !isDescriptionVisible
+            descriptionView.visibility = if (isDescriptionVisible) View.VISIBLE else View.GONE
+            actionButton.text = if (isDescriptionVisible) "隐藏介绍" else "显示介绍"
+
+            imageView.setImageResource(
+                if (imageSelect) {
+                    R.drawable.ic_launcher_foreground
+                } else {
+                    R.drawable.ic_launcher_background
+                },
+            )
+            imageSelect = !imageSelect
+
+            // 不需要，因为 系统 UI 属性发生变化后，会自动触发 requestLayout
+            // requestLayout()
+        }
+
+        override fun onMeasure(
+            widthMeasureSpec: Int,
+            heightMeasureSpec: Int,
+        ) {
+            // 测量所有子视图, 测量子视图的时候，需要传入当前视图的宽高约束
+            measureChildren(widthMeasureSpec, heightMeasureSpec)
+
+            val widthMode = MeasureSpec.getMode(widthMeasureSpec)
+            val widthSize = MeasureSpec.getSize(widthMeasureSpec)
+            val heightMode = MeasureSpec.getMode(heightMeasureSpec)
+            val heightSize = MeasureSpec.getSize(heightMeasureSpec)
+
+            // 计算内容宽度（取子视图最大宽度）
+            val contentWidth =
+                max(
+                    imageView.measuredWidth,
+                    max(descriptionView.measuredWidth, actionButton.measuredWidth),
+                ) + paddingLeft + paddingRight
+
+            // 计算内容高度
+            var contentHeight = paddingTop + paddingBottom
+            contentHeight += imageView.measuredHeight
+            if (isDescriptionVisible) {
+                contentHeight += descriptionView.measuredHeight
+            }
+            contentHeight += actionButton.measuredHeight
+            contentHeight += resources.getDimensionPixelSize(R.dimen.element_spacing) * 2
+
+            // 确定最终尺寸
+            val width =
+                when (widthMode) {
+                    MeasureSpec.EXACTLY -> widthSize
+                    MeasureSpec.AT_MOST -> minOf(contentWidth, widthSize)
+                    else -> contentWidth
+                }
+
+            val height =
+                when (heightMode) {
+                    MeasureSpec.EXACTLY -> heightSize
+                    MeasureSpec.AT_MOST -> minOf(contentHeight, heightSize)
+                    else -> contentHeight
+                }
+
+            setMeasuredDimension(width, height)
+        }
+
+        override fun onLayout(
+            changed: Boolean,
+            l: Int,
+            t: Int,
+            r: Int,
+            b: Int,
+        ) {
+            val spacing = resources.getDimensionPixelSize(R.dimen.element_spacing)
+            var currentTop = paddingTop
+
+            val imageLeft = paddingLeft + (measuredWidth - paddingLeft - paddingRight - imageView.measuredWidth) / 2
+            // 布局图片视图
+            imageView.layout(
+                imageLeft,
+                currentTop,
+                imageLeft + imageView.measuredWidth,
+                currentTop + imageView.measuredHeight,
+            )
+            currentTop += imageView.measuredHeight + spacing
+
+            // 布局描述文本（如果可见）
+            if (isDescriptionVisible) {
+                descriptionView.layout(
+                    paddingLeft,
+                    currentTop,
+                    paddingLeft + descriptionView.measuredWidth,
+                    currentTop + descriptionView.measuredHeight,
+                )
+                currentTop += descriptionView.measuredHeight + spacing
+            }
+
+            // 布局按钮（居中）
+            val buttonLeft = paddingLeft + (measuredWidth - paddingLeft - paddingRight - actionButton.measuredWidth) / 2
+            actionButton.layout(
+                buttonLeft,
+                currentTop,
+                buttonLeft + actionButton.measuredWidth,
+                currentTop + actionButton.measuredHeight,
+            )
+        }
+
+        // 设置图片资源
+        fun setImageResource(resId: Int) {
+            imageView.setImageResource(resId)
+        }
+
+        // 设置描述文本
+        fun setDescription(text: String) {
+            descriptionView.text = text
+            // 同样不需要
+            // requestLayout()
+        }
+
+        // 设置按钮文本
+        fun setButtonText(text: String) {
+            actionButton.text = text
+        }
+
+        // 设置按钮点击监听
+        fun setOnButtonClickListener(listener: OnClickListener) {
+            actionButton.setOnClickListener {
+                // 先执行自定义的点击事件
+                listener.onClick(it)
+                // 再执行默认的切换功能
+                toggleDescription()
+            }
+        }
+    }
+```
+
 
 ### 继承 TextView
 
-### 继承 ViewGroup
-
 ### 继承 LinearLayout
+
+### 组合 View
 
 ---
 
