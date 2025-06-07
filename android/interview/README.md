@@ -1844,7 +1844,115 @@ class SplitContainer(context: Context, attributeSet: AttributeSet? = null, defSt
 
 ```
 
-### 继承 TextView
+### 继承 Button
+
+我们有时候可以继承一个现有的系统视图来以较低成本达到自己的目的。假如我们有如下需求：
+
+我现在需要扩展一个按钮，使其背景为圆形，字体居中，点击后，背景色会发生随机变化。
+
+实例代码如下，关键点全部在注释中。
+
+```kotlin
+class CircleButton
+    @JvmOverloads
+    constructor(
+        context: Context,
+        attrs: AttributeSet? = null,
+        defStyleAttr: Int = com.google.android.material.R.attr.buttonStyle,
+    ) : AppCompatButton(context, attrs, defStyleAttr) {
+        private val paint =
+            Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.FILL
+            }
+
+        // 预定义的颜色数组
+        private val colors =
+            listOf(
+                Color.RED,
+                Color.BLUE,
+                Color.GREEN,
+                Color.YELLOW,
+                Color.CYAN,
+                Color.MAGENTA,
+                Color.GRAY,
+                Color.DKGRAY,
+            )
+        private var currentColorIndex = 0
+
+        // 文本居中需要的偏移量，这里主要是发现圆形按钮中，文字不居中，所以想重新构建偏移，使得文字居中，到不重要，可以忽略。
+        private var textOffsetX = 0f
+        private var textOffsetY = 0f
+
+        init {
+            // 初始背景色
+            updateBackgroundColor()
+
+           // 移除默认背景
+           background = null
+
+            // 注册颜色切换时间到 点击时间发生时，这个是为了在外部设置click 监听后，图片切换功能还可以正常使用。
+            setOnTouchListener { _, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        isPressed = true
+                        invalidate()
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        isPressed = false
+                        currentColorIndex = (currentColorIndex + 1) % colors.size
+                        updateBackgroundColor()
+                        invalidate() // 这里还是需要主动请求重绘的，因为 updateBackgroundColor 更改的是自定义属性，而不是 Button 自身的属性。
+                        performClick()
+                        true
+                    }
+                    else -> false
+                }
+            }
+        }
+
+        private fun updateBackgroundColor() {
+            paint.color = colors[currentColorIndex]
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            // 绘制圆形背景
+            val radius = (width.coerceAtMost(height)) / 2f
+            canvas.drawCircle(width / 2f, height / 2f, radius, paint)
+            // 应用文本偏移量， (此处没有使用 textOffsetY, 是因为我发现高度上文字是居中的，到也不需要做这个操作。这个得需要后续对文本排版有更深了解才行)
+            canvas.translate(textOffsetX, 0f)
+            // 绘制按钮文本（调用父类方法）
+            super.onDraw(canvas)
+        }
+
+        override fun onMeasure(
+            widthMeasureSpec: Int,
+            heightMeasureSpec: Int,
+        ) {
+            // 调用基类测量方法，主要是我们很难确认不同文本带来的影响，这里借助于系统的 onMeasure 完成文本的测量。
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+            // 获取文本测量的宽高，这个倒也不是真正的文本的宽高，而是系统 Button 的宽高。
+            val textWidth = measuredWidth
+            val textHeight = measuredHeight
+
+            // 计算需要的直径（取文本宽高的最大值 + 内边距）
+            val desiredDiameter = textWidth.coerceAtLeast(textHeight) + paddingLeft + paddingRight
+
+            // 根据测量模式调整最终尺寸
+            val finalWidth = resolveSize(desiredDiameter, widthMeasureSpec)
+            val finalHeight = resolveSize(desiredDiameter, heightMeasureSpec)
+
+            // 确保是正方形
+            val finalSize = finalWidth.coerceAtMost(finalHeight)
+            // 计算文本居中需要的偏移量
+            val textBounds = Rect()
+            paint.getTextBounds(text.toString(), 0, text.length, textBounds)
+            textOffsetX = (finalSize - textWidth) / 2f - textBounds.left
+            textOffsetY = (finalSize - textHeight) / 2f - textBounds.top
+            setMeasuredDimension(finalSize, finalSize)
+        }
+    }
+```
 
 ### 继承 LinearLayout
 
