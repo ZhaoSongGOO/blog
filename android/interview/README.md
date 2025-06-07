@@ -1956,7 +1956,101 @@ class CircleButton
 
 ### 继承 LinearLayout
 
-### 组合 View
+我们现在有这样的需求，我想实现一个类似于孔雀开屏一样的布局，如下所示：
+
+- 我们可以指定布局开始角度
+- 我们可以指定布局半径
+- 我们可以指定布局跨越的角度范围
+
+<img src="android/interview/resources/a_14.png" style="width:10%">
+
+我们先介绍一下 APP 坐标系，由左向右为 X 轴正向，由上到下为 Y 轴正向。
+
+<img src="android/interview/resources/a_15.png" style="width:20%">
+
+具体代码如下，关键点见注释。
+
+```kotlin
+class PeacockLayout(context: Context, attributeSet: AttributeSet? = null, defStyleAttr: Int = 0) :
+FrameLayout(context, attributeSet, defStyleAttr) {
+
+    constructor(context: Context, attributeSet: AttributeSet? = null):this(context, attributeSet, 0){}
+
+    // 默认值
+    //  spreadAngle: 这个是角度范围，默认为 180 度
+    // radius: 半径，即布局元素中心点距离整个 Container 中点的距离
+    // startAngle: 开始角度
+    private var spreadAngle = 180f;
+    private var radius = 300f;
+    private var startAngle = 270f;
+
+    init {
+        context.obtainStyledAttributes(attributeSet, R.styleable.PeacockLayout).apply {
+            spreadAngle = getFloat(R.styleable.PeacockLayout_spreadAngle, spreadAngle)
+            radius = getDimension(R.styleable.PeacockLayout_radius, radius)
+            startAngle = getFloat(R.styleable.PeacockLayout_startAngle, startAngle)
+            recycle()
+        }
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+        val childMaxSize = getMaxChildSize()
+        // 孔雀布局的期望尺寸就是两倍半径 + 最大孩子的尺寸
+        val desiredWidth = (radius*2 + childMaxSize).toInt()
+        val desiredHeight = desiredWidth
+
+        val resolveWidth = resolveSize(desiredWidth, widthMeasureSpec)
+        val resolveHeight = resolveSize(desiredHeight, heightMeasureSpec)
+        setMeasuredDimension(
+            resolveWidth,
+            resolveHeight
+        )
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        val centerX = width / 2f
+        val centerY = height / 2f
+        val childCount = childCount
+
+        if (childCount == 0) return
+
+        // 计算每个子视图的角度间隔
+        val angleStep = spreadAngle / (childCount - 1)
+
+        for (i in 0 until childCount) {
+            val child = getChildAt(i)
+            if (child.visibility == GONE) continue
+
+            // 计算当前角度（弧度）
+            val angle = Math.toRadians((startAngle + angleStep * i).toDouble())
+
+            // 计算子视图位置（极坐标转直角坐标）
+            val childX = centerX + radius * cos(angle) - child.measuredWidth / 2
+            val childY = centerY + radius * sin(angle) - child.measuredHeight / 2
+
+            // 布局子视图
+            child.layout(
+                childX.toInt(),
+                childY.toInt(),
+                (childX + child.measuredWidth).toInt(),
+                (childY + child.measuredHeight).toInt()
+            )
+        }
+    }
+
+    private fun getMaxChildSize(): Int {
+        var maxSize = 0
+        for (i in 0 until childCount) {
+            val child = getChildAt(i)
+            if (child.visibility != GONE) {
+                maxSize = max(maxSize, max(child.measuredWidth, child.measuredHeight))
+            }
+        }
+        return maxSize
+    }
+}
+```
 
 ---
 
