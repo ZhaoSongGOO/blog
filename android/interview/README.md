@@ -1439,7 +1439,7 @@ if(area_changed || invalidate){
 2. 我们想组合 View，以便于复用。例如给 ViewGroup 挂接图片和文字组成一个图片介绍组件。
 
 
-#### 步骤
+#### 组合View
 
 1. 依然可以定义自己的属性
 
@@ -1662,6 +1662,187 @@ class CardView
     }
 ```
 
+
+
+
+
+
+
+
+
+#### 实现自定义的布局形式
+
+我现在有如下的需求，设计一个布局，在这个布局中的子元素如果增加了 isMain 参数，那这个视图就独占容器左侧，其余视图都线性从上到下安排在容器右侧。
+
+1. 定义属性 `isMain`
+
+```xml
+<declare-styleable name="SplitContainer_Layout">
+    <attr name="isMain" format="boolean" />
+</declare-styleable>
+```
+
+2. 实现自定义 ViewGroup
+
+- 因为我们不是自定义的 View， 所以没法直接拿到我们 ViewGroup 中子元素的属性，所以没办法判断其是不是包含了 `isMain` 属性，所以我们需要重定义 ViewGroup 的 LayoutParams，对于一个 ViewGroup 来说，其所有被添加的子元素都会使用这个 ViewGroup 的三个方法来获取自己的 layoutParams。所以这里我们重定义这些方法，来得以解析子视图的属性。
+
+```java
+LayoutParams getLayoutParams(View child) {
+    if (child.hasLayoutParams()) {
+        // 调用 generateLayoutParams(ViewGroup.LayoutParams)
+        return generateLayoutParams(child.getLayoutParams());
+    } else if (从XML加载) {
+        // 调用 generateLayoutParams(AttributeSet)
+        return generateLayoutParams(attrs);
+    } else {
+        // 调用 generateDefaultLayoutParams()
+        return generateDefaultLayoutParams();
+    }
+}
+```
+
+```kotlin
+class SplitContainer(context: Context, attributeSet: AttributeSet? = null, defStyleAttr: Int = 0) :
+    ViewGroup(context, attributeSet, defStyleAttr) {
+    
+    // 重定义 layoutParams, 得以解析子视图的属性
+    class LayoutParams(
+        context: Context,
+        attrs: AttributeSet?,
+    ) : ViewGroup.LayoutParams(context, attrs) {
+        var isMain: Boolean = false
+
+        init {
+            context.obtainStyledAttributes(attrs, R.styleable.SplitContainer_Layout).apply {
+                try {
+                    isMain = getBoolean(R.styleable.SplitContainer_Layout_isMain, false)
+                } finally {
+                    recycle()
+                }
+            }
+        }
+    }
+
+    constructor(context: Context, attributeSet: AttributeSet? = null) : this(context, attributeSet, 0) {}
+
+    private var mainView: View? = null
+    private val rightViews = mutableListOf<View>()
+
+    // 重定义这两个方法
+    override fun generateLayoutParams(attrs: AttributeSet?): ViewGroup.LayoutParams? {
+        return LayoutParams(context, attrs)
+    }
+
+    override fun generateLayoutParams(p: ViewGroup.LayoutParams?): ViewGroup.LayoutParams? {
+        return LayoutParams(p?.width ?: 0, p?.height ?: 0)
+    }
+
+    override fun onMeasure(
+        widthMeasureSpec: Int,
+        heightMeasureSpec: Int,
+    ) {
+        findMainView()
+
+        val widthSize = MeasureSpec.getSize(widthMeasureSpec)
+        val widthMode = MeasureSpec.getMode(widthMeasureSpec)
+        val heightSize = MeasureSpec.getSize(heightMeasureSpec)
+        val heightMode = MeasureSpec.getMode(heightMeasureSpec)
+
+        var totalHeight = 0
+        var maxRightHeight = 0
+
+        val leftWidth =
+            if (mainView != null) {
+                widthSize / 2
+            } else {
+                0
+            }
+        val rightWidth = widthSize - leftWidth
+
+        mainView?.let {
+            val childWidthSpec = MeasureSpec.makeMeasureSpec(leftWidth, MeasureSpec.EXACTLY)
+            val childHeightSpec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+            measureChild(it, childWidthSpec, childHeightSpec)
+            totalHeight = max(totalHeight, it.measuredHeight)
+        }
+
+        rightViews.forEach { view ->
+            val childWidthSpec = MeasureSpec.makeMeasureSpec(rightWidth, MeasureSpec.EXACTLY)
+            val childHeightSpec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+            measureChild(view, childWidthSpec, childHeightSpec)
+
+            maxRightHeight += view.measuredHeight
+        }
+
+        totalHeight = max(totalHeight, maxRightHeight)
+
+        val finalWidth =
+            when (widthMode) {
+                MeasureSpec.EXACTLY -> widthSize
+                else -> widthSize.coerceAtLeast(suggestedMinimumWidth)
+            }
+
+        val finalHeight =
+            when (heightMode) {
+                MeasureSpec.EXACTLY -> heightSize
+                else -> totalHeight.coerceAtLeast(suggestedMinimumHeight)
+            }
+
+        setMeasuredDimension(finalWidth, finalHeight)
+    }
+
+    override fun onLayout(
+        changed: Boolean,
+        l: Int,
+        t: Int,
+        r: Int,
+        b: Int,
+    ) {
+        val width = width
+        val halfWidth =
+            if (mainView != null) {
+                width / 2
+            } else {
+                0
+            }
+
+        // 布局主视图（左侧居中）
+        mainView?.let { view ->
+            val viewHeight = view.measuredHeight
+            val top = (height - viewHeight) / 2
+            view.layout(0, top, halfWidth, top + viewHeight)
+        }
+
+        // 布局右侧视图（垂直排列）
+        var currentTop = 0
+        rightViews.forEach { view ->
+            val viewHeight = view.measuredHeight
+            view.layout(halfWidth, currentTop, width, currentTop + viewHeight)
+            currentTop += viewHeight
+        }
+    }
+
+    private fun findMainView() {
+        mainView = null
+        rightViews.clear()
+
+        for (i in 0 until childCount) {
+            val child = getChildAt(i)
+            if (child.visibility != GONE) {
+                val lp = child.layoutParams as? LayoutParams
+                if (lp?.isMain == true) {
+                    if (mainView == null) {
+                        mainView = child
+                    }
+                } else {
+                    rightViews.add(child)
+                }
+            }
+        }
+    }
+}
+
+```
 
 ### 继承 TextView
 
