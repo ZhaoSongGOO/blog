@@ -345,15 +345,16 @@ android {
 1. 生成自己的秘钥
 
 ```bash
-keytool -genkeypair -v \
-  -keystore my-release-key.jks \   # 密钥库文件名
-  -keyalg RSA \                    # 算法：RSA/EC
-  -keysize 2048 \                  # 密钥长度
-  -validity 10000 \                # 有效期（天）
-  -alias my-alias \                # 密钥别名
-  -storepass 123456 \                # 密钥库密码
-  -keypass 123456                    # 私钥密码
+keytool -genkeypair -v -keystore my-release-key.jks -keyalg RSA -keysize 2048 -validity 10000 -alias my-alias -storepass 123456 -keypass 123456
 ```
+
+- keystore my-release-key.jks    # 密钥库文件名
+- keyalg RSA                     # 算法：RSA/EC
+- keysize 2048                  # 密钥长度
+- validity 10000                 # 有效期（天）
+- alias my-alias                # 密钥别名
+- storepass 123456                # 密钥库密码
+- keypass 123456                    # 私钥密码
 
 2. Gradle 配置签名信息
 
@@ -376,6 +377,16 @@ keytool -genkeypair -v \
     }
 ```
 
+或者通过命令行进行签名:
+
+```bash
+apksigner sign \
+  --ks my-release-key.jks \     # 密钥库
+  --ks-key-alias my-alias \     # 别名
+  --out app-signed.apk \        # 输出文件
+  app-unsigned.apk              # 待签名APK
+```
+
 3. 验证
 
 ```bash
@@ -385,6 +396,76 @@ keytool -printcert -jarfile app.apk
 # 查看签名方案
 apksigner verify -v --print-certs app.apk
 ```
+
+### 签名的几个细节
+
+1. 没有签名的 APK 可以被安装吗？
+
+先说结论“不可以直接安装”。Android系统强制要求：所有APK在安装前必须经过数字签名。这是Android安全架构的核心机制。
+唯一例外 - 使用Android Studio直接运行到设备：在开发调试时，Android Studio会自动使用一个调试密钥为APK签名并安装到连接的设备或模拟器上。虽然这个APK是有签名的（调试签名），但对于开发者来说，感觉像是“没自己签名”。但本质上它还是签了名的。
+
+2. 对一个签名的 APK 再次签名会怎么样？
+
+新的签名会完全覆盖旧的签名，并且APK的内容摘要（指纹）会改变。默认行为是移除原有的所有签名信息，然后应用新的签名信息。
+
+关键变化：
+- META-INF/ 目录下原有的签名文件 (.RSA, .SF, .DSA 等) 会被删除，替换为基于新密钥生成的新签名文件。
+- APK的完整性校验值会基于新签名密钥重新计算。
+- V2/V3/V4签名块：如果使用apksigner并启用了V2+签名，新的签名块会被写入APK文件的特定区域，替换旧的签名块。
+
+后果：
+- 安装覆盖问题：如果用户设备上已经安装了使用旧签名的同一个应用（相同的包名），尝试安装这个新签名的APK会失败。系统会认为这是一个来自不同开发者的同名应用（因为签名密钥是开发者身份的唯一标识），提示INSTALL_FAILED_UPDATE_INCOMPATIBLE或类似错误。必须先卸载旧版本才能安装新版本。
+- 数据丢失：因为需要先卸载旧版本，所以旧应用的所有用户数据也会被清除。
+- 渠道信息丢失：如果原APK嵌入了渠道信息（如在META-INF放空文件），重签名过程通常会清除META-INF，导致这些信息丢失（需在重签名后重新添加）。
+- 完整性验证：任何验证此APK签名的人（如应用商店、设备系统）都会看到并使用新的签名信息进行验证。
+
+
+3. 修改 APK 后，使用自己的秘钥对其进行签名是不是可以顺利安装?
+
+如果你对一个别人发布的APK进行修改，然后用你自己的签名密钥对这个修改后的APK进行完整的重签名，那么这个新的APK本身是可以通过Android系统的“基本签名验证”并成功安装到设备上的。
+
+但是这个顺利安装只是说通过了系统检查，在大多数时候 APP 内部也会进行签名校验逻辑，同时你必须卸载原有的应用才能安装这个重新签名的应用。
+
+
+4. 重打包技术流程
+
+<img src="android/interview/build/apk/resources/b_5.png" style="width:100%">
+
+- 解包
+你可以使用 `apktool` 工具进行解压，也可以像加压压缩包一样使用 unzip 进行解压，区别在于 `apktool` 可以反编译 `AndroidManifest.xml` 文件。
+
+```bash
+apktool d app.apk -o output_dir
+unzip app.apk -d output_dir
+```
+
+- 修改
+    - `AndroidManifest.xml` 修改
+        - 增加权限
+        - 修改包名
+        - ...
+    - 修改 java 代码
+    - 修改 native 库
+    - 修改资源 
+
+- 重打包
+你可以使用 apktool 来进行重打包成 apk，也可以使用 压缩工具压缩成 apk。
+
+```bash
+apktool b output_dir -o modified.apk
+cd output_dir && zip -r ../modified.apk .
+```
+
+- 重签名
+修改后的 apk 需要重新签名。
+
+- 对齐优化
+优化包体积，提升性能。
+
+```bash
+zipalign -v 4 modified.apk aligned.apk
+```
+
 
 ## flavor 定制
 
