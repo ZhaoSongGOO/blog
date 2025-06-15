@@ -43,4 +43,10 @@ host.dispatchAttachedToWindow(mAttachInfo, 0);
 通过这一步，`DecorView` 可以访问到 `ViewRootImpl`了！
 
 
+## Context 是什么？
 
+
+## Activity 是什么？
+
+
+## WMS 是什么？
