@@ -50,7 +50,7 @@ Activity（活动） 是 Android 四大组件之一，代表一个用户交互�
 
 <img src="android/interview/basic/resources/a_2.png" style="width:50%">
 
-`activity` 会独占一个全新的任务栈（Task），且该栈中只能存在该 `activity` 的实例。
+`activity` 会独占一个全新的任务栈（Task），且该栈中只能存在该 `activity` 的实例。这是一个全局单例。
 
 ##### singleInstancePerTask
 
@@ -109,7 +109,7 @@ private fun replace(fragment: Fragment) {
 ```
 
 
-默认的情况下，当你的 fragment 被 replace 后，旧的会被直接销毁，所以可以使用 addToBackStack 将其增加到返回站，你在点击back后可以返回上 Fragment。
+默认的情况下，当你的 fragment 被 replace 后，旧的会被直接销毁，所以可以使用 addToBackStack 将其增加到返回栈，你在点击back后可以返回上一个 Fragment。
 
 ```kotlin
 class MainActivity : AppCompatActivity() {
@@ -153,7 +153,7 @@ if (activity != null) {
 1. 运行
 当关联的activity处于运行状态时，fragment也处于运行状态。
 2. 暂停
-当一个activity进入到暂停状态，fragment也会处于运行状态。
+当一个activity进入到暂停状态，fragment也会处于暂停状态。
 3. 停止
 当一个Activity进入停止状态时，与它相关联的Fragment就会进入停止状态，或者通过调用FragmentTransaction的remove()、replace()方法将Fragment从Activity中移除，但在事务提交之前调用了addToBackStack()方法，这时的Fragment也会进入停止状态
 4. 销毁
@@ -278,11 +278,11 @@ class MainActivity : AppCompatActivity() {
 
 在持久通信中，和 service 建立通信的对象都会获得同一个 Binder 实例。
 
-使用 bind 的时候，如果是第一次创建连接，那就调用 `onCreate` -> `onBind` 方法，并将 `onBind` 方法返回的 `Binder` 返回给连接对象。 对象A尝试在连接的状态下再次连接，将不会有任何的反应。
+对象 A 使用 bind 的时候，如果是第一次创建连接，那就调用 `onCreate` -> `onBind` 方法，并将 `onBind` 方法返回的 `Binder` 返回给连接对象。 对象A尝试在连接的状态下再次连接，将不会有任何的反应。
 
 可以有多个对象通过 bind 连接上 service，后续建立连接的对象将不会执行 `onBind` 方法，而是直接返回对应的 `Binder` 对象。
 
-unbind 的时候，会调用 `onDestory` 方法。对于一个没有 bind 的 链接，调用 unbind 会发生异常。
+`unbind` 的时候，会调用 `onDestory` 方法。对于一个没有 bind 的 链接，调用 `unbind` 会发生异常。
 
 ```kotlin
 class MyService : Service() {
@@ -347,10 +347,10 @@ class MainActivity : AppCompatActivity() {
 
 #### 生命周期总结
 
-1. 一旦在项目的任何位置调用了 Context 的 startService()方法，相应的 Service 就会启动，并回调 onStartCommand() 方法。如果这个Service之前还没有创建过，onCreate()方法会先于onStartCommand()方法执行。Service启动了之后会一直保持运行状态，直到stopService()或stopSelf()方法被调用，或者被系统回收。注意，虽然每调用一次startService()方法，onStartCommand()就会执行一次，但实际上每个Service只会存在一个实例。所以不管你调用了多少次startService()方法，只需调用一次stopService()或stopSelf()方法，Service就会停止。
-2. 还可以调用Context的bindService()来获取一个Service的持久连接，这时就会回调Service中的onBind()方法。如果这个Service之前还没有创建过，onCreate()方法会先于onBind()方法执行。之后，调用方可以获取到onBind()方法里返回的IBinder对象的实例，这样就能自由地和Service进行通信了。只要调用方和Service之间的连接没有断开，Service就会一直保持运行状态，直到被系统回收。
-3. 当调用了startService()方法后，再去调用stopService()方法。这时Service中的onDestroy()方法就会执行，表示Service已经销毁了。类似地，当调用了bindService()方法后，再去调用unbindService()方法，onDestroy()方法也会执行，这两种情况都很好理解。
-4. 但是需要注意，我们是完全有可能对一个Service既调用了startService()方法，又调用了bindService()方法的，在这种情况下该如何让Service销毁呢？根据Android系统的机制，一个Service只要被启动或者被绑定了之后，就会处于运行状态，必须要让以上两种条件同时不满足，Service才能被销毁。所以，这种情况下要同时调用stopService()和unbindService()方法，onDestroy()方法才会执行。
+1. 一旦在项目的任何位置调用了 `Context` 的 `startService()`方法，相应的 `Service` 就会启动，并回调 `onStartCommand()` 方法。如果这个 `Service` 之前还没有创建过，`onCreate()`方法会先于 `onStartCommand()` 方法执行。`Service` 启动了之后会一直保持运行状态，直到 `stopService()` 或 `stopSelf()` 方法被调用，或者被系统回收。注意，虽然每调用一次 `startService()` 方法，`onStartCommand()`就会执行一次，但实际上每个 `Service` 只会存在一个实例。所以不管你调用了多少次 `startService()` 方法，只需调用一次`stopService()` 或 `stopSelf()` 方法，`Service` 就会停止。
+2. 还可以调用 `Context` 的 `bindService()` 来获取一个 `Service` 的持久连接，这时就会回调 `Service` 中的 `onBind()` 方法。如果这个 `Service` 之前还没有创建过，`onCreate()` 方法会先于 `onBind()` 方法执行。之后，调用方可以获取到 `onBind()` 方法里返回的 `IBinder` 对象的实例，这样就能自由地和 `Service` `进行通信了。只要调用方和Service` 之间的连接没有断开，`Service` 就会一直保持运行状态，直到被系统回收。
+3. 当调用了 `startService()` 方法后，再去调用 `stopService()` 方法。这时 `Service` 中的 `onDestroy()` 方法就会执行，表示 `Service` 已经销毁了。类似地，当调用了`bindService()` 方法后，再去调用 `unbindService()`方法，`onDestroy()`方法也会执行，这两种情况都很好理解。
+4. 但是需要注意，我们是完全有可能对一个 `Service` 既调用了 `startService()` 方法，又调用了 `bindService()` 方法的，在这种情况下该如何让 `Service` 销毁呢？根据 Android 系统的机制，一个 `Service` 只要被启动或者被绑定了之后，就会处于运行状态，必须要让以上两种条件同时不满足，`Service` 才能被销毁。所以，这种情况下要同时调用 `stopService()`和`unbindService()`方法，`onDestroy()`方法才会执行。
 
 
 #### 前台 service
@@ -417,10 +417,10 @@ class NotifyService : Service() {
 
 ##### Thread
 
-> 如何结束一个 Thread 创建的线程?
+> 如何结束一个 `Thread` 创建的线程?
 > 对于不执行阻塞任务的线程，无需关心，运行完成后会自动停止。
-> 如果我们就想手动终止一个线程，或者必须手动终止(例如下面这个无限循环的，在整个进程退出前，它都不会销毁, 更严重的是， JVM 在退出前会等待所有线程执行完成才会退出)。那就需要对其调用 interrupt.
-> 需要注意的是 interrupt 不会直接中断线程，只是将其设置成中断状态，只有这个线程 block 中包含阻塞调用，才会直接触发 InterruptedException 来进行中断。如果我们不包含阻塞调用，那就要手动判断中断状态以适时退出。
+> 如果我们就想手动终止一个线程，或者必须手动终止(例如下面这个无限循环的，在整个进程退出前，它都不会销毁, 更严重的是， `JVM` 在退出前会等待所有线程执行完成才会退出)。那就需要对其调用 `interrupt`.
+> 需要注意的是 `interrupt` 不会直接中断线程，只是将其设置成中断状态，只有这个线程 `block` 中包含阻塞调用，才会直接触发 `InterruptedException` 来进行中断。如果我们不包含阻塞调用，那就要手动判断中断状态以适时退出。
 > 同时还有一个更加简单的操作，我们可以对线程设置成 `Daemon`, 这样 JVM 在退出前不会等待他，而是直接销毁。
 
 ```kotlin
@@ -701,7 +701,7 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
 
 #### 广播类型
 
-<img src="android/interview/basic/resources/a_5.png" style="width:70%">
+<img src="android/interview/basic/resources/a_5.png" style="width:30%">
 
 ##### 显式广播
 
@@ -715,9 +715,8 @@ sendBroadcast(intent)
 ##### 隐式广播
 
 除了显式广播外的都是隐式广播。存在下面几个需要注意的点：
-1. 除了系统的隐式广播外，静态注册的 receiver 不能接收隐式广播。
-2. 静态注册的 receiver 可以接收应用内的隐式广播。
-3. 动态注册的 receiver 可以接收任意来源的隐式广播。
+1. 静态注册的 receiver 不能接收除了系统以及应用内的隐式广播外其余的隐式广播 (例如其余 APP 发送的隐式广播)。
+2. 动态注册的 receiver 可以接收任意来源的隐式广播。
 
 ```kotlin
 // 发送 action 为 LION.CUSTOM_IMPLICIT_BROADCAST 的隐式广播
@@ -805,7 +804,7 @@ class CallPhoneActivity : AppCompatActivity() {
 
 #### 系统 ContentProvider
 
-我们可以获取到任何提供了 ContentProvider APP 中的数据。ContentProvider 暴露出去的服务类似于一个数据库，我们可以对数据进行增删改查等操作。下面我们以读取系统联系人为例进行展示。
+我们可以获取到任何提供了 `ContentProvider` APP 中的数据。`ContentProvider` 暴露出去的服务类似于一个数据库，我们可以对数据进行增删改查等操作。下面我们以读取系统联系人为例进行展示。
 
 1. 读取联系人是一个危险权限，我们需要进行动态权限获取。同时也需要在 XML 中静态添加权限。
 
@@ -876,11 +875,11 @@ class CallPhoneActivity : AppCompatActivity() {
 
 ##### 实现自己的 ContentProvider
 
-1. 定义自己的 ContentProvider
+1. 定义自己的 `ContentProvider`
 下面是几个需要注意的点：
-- `authority`: 可以理解成一个 ContentProvider 的定位符，其余应用需要通过 `content://$authority/tableName` 的 uri 来找到对应的 ContentProvider
+- `authority`: 可以理解成一个 `ContentProvider` 的定位符，其余应用需要通过 `content://$authority/tableName` 的 uri 来找到对应的 `ContentProvider`
 
-- ContentProvider 是一个数据通信类，本身没有数据存储能力。我们的数据都是借助于其他模块进行存储。例如使用 SQLite 或者文件。
+- `ContentProvider` 是一个数据通信类，本身没有数据存储能力。我们的数据都是借助于其他模块进行存储。例如使用 `SQLite` 或者文件。
 
 
 ```kotlin
