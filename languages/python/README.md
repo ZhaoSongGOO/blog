@@ -1,6 +1,6 @@
 # Python
 
-## 如何构造一个只读的类
+## 如何构造一个只读又可扩展的类
 
 ### 背景
 
@@ -62,6 +62,7 @@ with open("desc2.file", "r") as f:
 
 ### 具体设计
 
+#### 只读的 Env
 下面是这个只读类的具体设计，关键地方全部在注释中进行说明。
 
 ```python
@@ -85,10 +86,13 @@ class Env:
     # 重写属性设置接口，直接抛异常，避免属性设置。也可以采用更温和的手段，直接返回，反正不要直接修改属性就行了。
     def __setattr__(self, name, _):
         raise AttributeError(f"Can't set attribute \"{name}\". This is a read-only class.")
+```
 
+#### Env 扩展 EnvWrapper
 
-# EnvWrapper，这个类的作用是给 Env 提供一个扩展的能力，Env 可能包含的是最核心，最通用的全局属性或者方法，但是我们在某一次 exec 的时候，可能需要注入一些当前上下文需要的变量，EnvWrapper 会将当前上下文变量与 Env 本身组合暴露，而不污染 Env 本身。
-# 但是从用户来看，EnvWrapper 和 Env 是一样的使用方法。可以理解成这是一个装饰器模式之类的。
+EnvWrapper，这个类的作用是给 Env 提供一个扩展的能力，Env 可能包含的是最核心，最通用的全局属性或者方法，但是我们在某一次 exec 的时候，可能需要注入一些当前上下文需要的变量，EnvWrapper 会将当前上下文变量与 Env 本身组合暴露，而不污染 Env 本身。但是从用户来看，EnvWrapper 和 Env 是一样的使用方法。可以理解成这是一个装饰器模式，亦或是代理模式。
+
+```python
 class EnvWrapper:
     # wrapper 本身初始化会把 Env 设置成自己的属性。
     def __init__(self, env:Env):
@@ -104,7 +108,7 @@ class EnvWrapper:
     def __setattr__(self, name, _):
         raise AttributeError(f"Can't set attribute \"{name}\".. This is a read-only class.")
 
-    # 扩展接口，这里用来把当前上下文比较关注的属性挂在子 wrapper 本身，而不是 env 上。
+    # 扩展接口，这里用来把当前上下文比较关注的属性挂载在 wrapper 本身，而不是 env 上。
     def update(self, custom=None):
         if custom is None:
             custom = {}
@@ -128,8 +132,10 @@ class EnvBuild:
     def get_deps_env(custom={}):
         EnvBuild.init_deps_env()
         return EnvWrapper(EnvBuild._env).update(custom)
+```
 
-
+#### 使用举例
+```python
 # 简单的使用方法
 d = EnvBuild.get_deps_env({"age":100})
 print(d.system, d.machine, d.age)
