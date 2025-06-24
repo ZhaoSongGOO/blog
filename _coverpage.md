@@ -4,6 +4,7 @@
 [Android](android/)
 [AOSP](aosp/)
 [Algorithm](algorithm/)
+[AI](ai/)
 [Design](arc/)
 [Compile](compile/)
 [Lynx](lynx/)
