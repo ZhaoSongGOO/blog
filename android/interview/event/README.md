@@ -248,7 +248,236 @@ public boolean performClick() {
 
 ## 几个问题
 
+### 子视图如何阻止父亲视图拦截事件？
+
+#### 容器拦截流程
+
+事件拦截是 Android 系统提供的一种机制，允许容器类型组件对事件进行私吞，私吞的事件将不会调用子视图的 dispatchEvent 方法。我们以 LinearLayout 中的实现举例来看。
+
+下面展示的是 LinearLayout 的事件拦截相关逻辑，主要做的事情如下：
+
+> ACTION_DOWN: 代表按下事件，是一次触摸事件的开始。
+> mFirstTouchTarget: 记录的是一次完整的触摸事件中，响应的子视图。
+
+1. 如果该事件不是 ACTION_DOWN 事件而且之前的事件都没有子视图响应，那 Android 就认为这个事件也没有进一步发送给子视图的必要了，直接强制拦截 `intercepted = true`。
+
+2. 如果该事件是 ACTION_DOWN 或者之前有子视图响应，那就进入拦截判断。
+    - 首先取出 disallowIntercept 标志位，这个标志位代表是否允许容器拦截事件。
+    - 如果 disallowIntercept 为 true，那就直接 `intercepted = false;` 表示容器不拦截事件，继续后面的派发流程。
+    - 如果 disallowIntercept 为 false，就调用 onInterceptTouchEvent 回调，依据回调结果决定是不是拦截。
+
+```java
+// File: ViewGroup.java
+// Function: dispatchTouchEvent
+public boolean dispatchTouchEvent(MotionEvent ev) {
+    // 1. 事件包装，处理，事件链状态更新。
+    //......
+    // 2. 事件拦截判断
+    if (actionMasked == MotionEvent.ACTION_DOWN || mFirstTouchTarget != null) {
+        final boolean disallowIntercept = (mGroupFlags & FLAG_DISALLOW_INTERCEPT) != 0;
+        if (!disallowIntercept) {
+            // Allow back to intercept touch
+            intercepted = onInterceptTouchEvent(ev);
+        } else {
+            intercepted = false;
+        }
+    } else {
+        // There are no touch targets and this action is not an initial down
+        // so this view group continues to intercept touches.
+        intercepted = true;
+    }
+    //......
+    // 3. 事件派发:
+    if(!intercepted){
+        // 子视图派发
+    }else{
+        // 派发给自己
+        super.dispatchTouchEvent(ev);
+    }
+    // 
+    //......
+}
+```
+
+<img src="android/interview/event/resources/3.png" style="width:50%">
+
+
+如果 disallowIntercept 为 false，那是否拦截的决定权就交给了 onInterceptTouchEvent。下面我们看一下 onInterceptTouchEvent 的几个标准实现。
+
+1. ViewGroup.onInterceptTouchEvent
+
+可以看出如果当前时间是鼠标点击滚动条那就拦截，否则不拦截。在我们大多数移动设备上，是很少有鼠标点击的操作的，可以认为 ViewGroup.onInterceptTouchEvent 默认不对事件做拦截。
+
+```java
+public boolean onInterceptTouchEvent(MotionEvent ev) {
+    if (ev.isFromSource(InputDevice.SOURCE_MOUSE)
+            && ev.getAction() == MotionEvent.ACTION_DOWN
+            && ev.isButtonPressed(MotionEvent.BUTTON_PRIMARY)
+            && isOnScrollbarThumb(ev.getXDispatchLocation(0), ev.getYDispatchLocation(0))) {
+        return true;
+    }
+    return false;
+}
+```
+
+2. ScrollView.onInterceptTouchEvent
+
+ScrollView 是一个滚动组件，可以看到的是，其发现事件是 Move 的时候，会开始拦截。这也就意味这，对于 ScrollView 的子组件是永远没法感知到滚动事件的。
+
+```java
+// File: ScrollView.java
+@Override
+public boolean onInterceptTouchEvent(MotionEvent ev) {
+    /*
+        * This method JUST determines whether we want to intercept the motion.
+        * If we return true, onMotionEvent will be called and we do the actual
+        * scrolling there.
+        */
+
+    /*
+    * Shortcut the most recurring case: the user is in the dragging
+    * state and they is moving their finger.  We want to intercept this
+    * motion.
+    */
+    final int action = ev.getAction();
+    if ((action == MotionEvent.ACTION_MOVE) && (mIsBeingDragged)) {
+        return true;
+    }
+    //...
+}
+```
+
+#### 子视图组织父容器拦截
+
+为了描述这样的场景，我实现了如下的 demo。在 ViewGroup 中重写了默认的 onInterceptTouchEvent， 让其只对 ACTION_DOWN 放行，其余类型都拦截。当然我可以对任意的类型都拦截，但是这样的话，子视图永远没有机会来干预到容器的拦截，而且也不符合 Android UI 系统的设计哲学：一个标准的容器组件，不应该拦截 ACTION_DOWN 事件, 我们需要让子 View 感知到这个事件，这是 Android 设计哲学之一 "子 View 有机会声明自己对事件的兴趣"
+
+```kotlin
+class ParentViewGroup
+    @JvmOverloads
+    constructor(
+        context: Context,
+        attrs: AttributeSet? = null,
+        defStyleAttr: Int = 0,
+    ) : LinearLayout(context, attrs, defStyleAttr) {
+
+        override fun onLayout(
+            changed: Boolean,
+            l: Int,
+            t: Int,
+            r: Int,
+            b: Int,
+        ) {
+            super.onLayout(changed, l, t, r, b)
+        }
+
+        override fun onInterceptTouchEvent(ev: MotionEvent?): Boolean {
+            when (ev?.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    return false
+                }
+                else -> true
+            }
+            return true
+        }
+    }
+```
+
+子视图我提供了一个自定义的 View，代码如下，主要是重写了 dispatchTouchEvent 方法，这个方法中如果发现事件是 ACTION_DOWN，就对容器 requestDisallowInterceptTouchEvent，即把 disallowIntercept 设置成 true。这样做就可以阻止父容器对后续事件的强制拦截。
+
+```kotlin
+class ChildView(ctx: Context, attrs: AttributeSet? = null, defStyleAttr: Int = 0) : View(ctx, attrs, defStyleAttr) {
+    constructor(ctx: Context) : this(ctx, null, 0) {}
+    constructor(ctx: Context, attr: AttributeSet) : this(ctx, attr, 0) {}
+
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+
+    // 画了一个红色背景的圆
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val centerX = width / 2f
+        val centerY = height / 2f
+        val maxRadius = (Math.min(width, height) - paddingLeft - paddingRight) / 2f
+        fillPaint.color = Color.RED
+        canvas.drawCircle(centerX, centerY, maxRadius, fillPaint)
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent?): Boolean {
+        when (event?.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                parent?.requestDisallowInterceptTouchEvent(true)
+            }
+        }
+        return super.dispatchTouchEvent(event)
+    }
+}
+
+```
+
+为什么这样做就可以阻止父组件拦截了呢？我们可以分析一次点击事件发来时整体流程：
+1. 容器开始的时候，disallowIntercept 是 false，所以调用 onInterceptTouchEvent，onInterceptTouchEvent 中不会对 ACTION_DOWN 拦截，因此这个事件发送到子视图。
+2. 子视图发现是 ACTION_DOWN，就调用 requestDisallowInterceptTouchEvent，容器的 disallowIntercept 变成 true。
+3. 后续事件，例如 ACTION_UP 到来的时候，首先看到 disallowIntercept 是 true，就直接不拦截了，此时都不会调用容器的 onInterceptTouchEvent。所以子视图可以继续收到后续的事件。
+
+#### requestDisallowInterceptTouchEvent 影响范围。
+
+之前再想，那加入我有两个子视图，如下所示，设想下面的场景：
+1. 先点击 Button，此时不会触发点击事件，因为点击事件需要收到 ACTION_UP 才会触发，而这个事件都被容器拦截了。
+2. 然后点击 ChildView 的时候，会触发 requestDisallowInterceptTouchEvent，阻止容器拦截事件。
+3. 再次点击 Button 此时会正常触发 Button 的点击事件吗？
+
+上面其实想表达的就是 requestDisallowInterceptTouchEvent 操作设置的状态有效期是多久。如果和容器的生命周期绑定，那上面第三步就会出现 Button 点击生效了。一个 View 的行为会影响另外一个视图听起来就很烧脑，索性 requestDisallowInterceptTouchEvent 的状态生命周期是和事件链绑定的，再每一次 ACTION_DOWN 发起时，都会重置这个状态。
+
+```xml
+<com.uiapp.uitest.event.ParentViewGroup xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/green_shape">
+
+    <com.uiapp.uitest.event.ChildView
+        android:layout_width="100dp"
+        android:layout_height="100dp"
+        android:id="@+id/first"/>
+
+    <Button
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Click2"
+        android:id="@+id/second"/>
+
+</com.uiapp.uitest.event.ParentViewGroup>
+```
+
+```java
+//File: ViewGroup.java
+
+public boolean dispatchTouchEvent(MotionEvent ev) { 
+    //...
+    if (actionMasked == MotionEvent.ACTION_DOWN) {
+        //...
+        resetTouchState();
+    }
+    //...
+}
+
+private void resetTouchState() {
+    clearTouchTargets();
+    resetCancelNextUpFlag(this);
+    mGroupFlags &= ~FLAG_DISALLOW_INTERCEPT; // 重置这个状态
+    mNestedScrollAxes = SCROLL_AXIS_NONE;
+}
+```
+
+
 ### 视图遮盖会影响事件响应吗？
+
+#### 上层视图可以响应事件
+
+测试点击层叠区域，只有上层视图响应。很正常，因为上层视图响应后，容器就不会进一步 child.dispatchTouchEvent 了。
+
+#### 上层视图不响应事件
+
+那就由下层视图响应，其实这些都可以有之前的分析推到出来。
 
 
 ### ScrollView 默认无法响应用户自定义的点击事件是为啥？
