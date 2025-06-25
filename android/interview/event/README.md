@@ -248,6 +248,15 @@ public boolean performClick() {
 
 ## 几个问题
 
+### 子视图如何阻止父亲视图拦截事件？
+
+事件拦截是 Android 系统提供的一种机制，允许容器类型组件对事件进行私吞，私吞的事件将不会调用子视图的 dispatchEvent 方法。我们以 LinearLayout 中的实现举例来看。
+
+```java
+
+```
+
+
 ### 视图遮盖会影响事件响应吗？
 
 
