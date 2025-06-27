@@ -482,3 +482,53 @@ private void resetTouchState() {
 
 ### ScrollView 默认无法响应用户自定义的点击事件是为啥？
 
+ScrollView 是一个古老的可滑动组件，当其子视图尺寸大于自身尺寸是，其可以让子视图在其内部滚动展示。我在一次使用中，心血来潮的给 ScrollView 绑定了一个点击事件，但是发现这个事件无法触发，所以下面就来分析一下为什么？
+
+#### 通识
+
+在上面的学习中，我们已经知道点击事件的触发流程经历过如下路径：
+
+```java
+dispatchTouchEvent: 用来决定是谁响应，如果响应就继续调用，否则返回
+        -> OnTouchListener: 执行 listener，如果返回 true，则返回，不进一步消费。
+            -> onTouchEvent : 函数内部对 TouchEvent 进行响应，如果判决为点击事件，就会触发 performClick 执行用户绑定的点击事件监听。
+                -> performClick
+```
+
+#### 差异
+
+我们可以看到 performClick 的直接触发者是 onTouchEvent 方法，对于绝大多数的视图已经容器都没有对 onTouchEvent 做修改，所以一般我们可以给任意的 View 设置点击事件监听。但是 ScrollView 不一样，他重写了 onTouchEvent 方法，在他自己的 onTouchEvent 方法中没有执行 performClick 方法，因此绑定的点击事件是无效的。
+
+#### 如何让 ScrollView 响应点击事件呢
+
+作为一个对事件系统略有了解的我们，偏要想个办法来触发点击事件。思路也很简单，既然 ScrollView.onTouchEvent 没有调用 performClick, 那我们就要在合适的时机进行触发，需要注意的是，我们在触发过程中，还需要同时保留其原有的滚动特性。
+
+```kotlin
+class ScrollViewDemoActivity : Activity() {
+    override fun onPostCreate(savedInstanceState: Bundle?) {
+        super.onPostCreate(savedInstanceState)
+        setContentView(R.layout.activity_scrollview_demo_activity)
+        val scrollView = findViewById<ScrollView>(R.id.scrollView)
+
+        // 既然 ScrollView 在 onTouchEvent 中没有触发点击事件，那我们就注册一个  OnTouchListener，
+        // 当检测到点击完成时 (ACTION_UP 到来) 就手动触发 performClick。
+        // 同时为了不影响自有的滚动逻辑，这个 listener 返回 false 以使得事件继续消费到 onTouchEvent。
+        scrollView.setOnTouchListener { v, event ->
+            when(event.actionMasked) {
+                MotionEvent.ACTION_UP -> {
+                    v.performClick()
+                }
+            }
+            false
+        }
+
+        scrollView.setOnClickListener {
+            clickInfo.text = "点击事件: ScrollView 被点击"
+        }
+    }
+}
+
+```
+
+
+
