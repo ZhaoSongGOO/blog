@@ -77,19 +77,19 @@ Activity 中持有了对 PhoneWindow、Application、ActivityThread、Instrument
 
 2. 发送 Activity 创建消息
 
-桌面应用 startActivity 会通过底层 binder 驱动将启动消息发送给 AMS 服务。AMS 是一个运行在独立进程的系统服务。AMS 收到这个请求后，首先进行一些权限检查，如果没有通过权限检查就会启动失败，并抛出异常。如果权限校验通过，就会去判断 Activity 所在的应用是不是已经存在了，如果存在，就直接通过 binder 触发对应 APP 进程的 ApplicationThread proxy。让他执行 activity 创建工作。
+桌面应用 startActivity 会通过底层 binder 驱动将启动消息发送给 ATMS 服务。ATMS 是一个运行在独立进程的系统服务。ATMS 收到这个请求后，首先进行一些权限检查，如果没有通过权限检查就会启动失败，并抛出异常。如果权限校验通过，就会去判断 Activity 所在的应用是不是已经存在了，如果存在，就直接通过 binder 触发对应 APP 进程的 ApplicationThread proxy。让他执行 activity 创建工作。
 
 如果对应的 APP 不存在，
-- 会首先将本次启动 Activity 的信息存储起来，随后触发 zygote 创建对应的应用。在触发后，AMS 不会阻塞，而是转头去接受其他的请求。
+- 会首先将本次启动 Activity 的信息存储起来，随后触发 zygote 创建对应的应用。在触发后，ATMS 不会阻塞，而是转头去接受其他的请求。
 - zygote fork 新的 app 进程，并通过反射调用 ActiviyThread.main 方法。
-- ActiviyThread.main 会通过 binder 告诉 AMS，APP 已经创建好了。
-- AMS 收到消息后，从刚才缓存的信息中拿出需要启动的 Activity 信息，并通过 binder 触发 ApplicationThread 的 handlerLaunchActivity 方法，这个方法中会创建 Context、Applcation 对象以及 activity 对象。并将 activity.attach(context, application,...) 等信息关联起来。随后调用 activity.onCreate 方法。
-- AMS 会在合适的时候，通过 binder 触发 ApplicationThread 的 handlerStartActivity、handlerResumeActivity 等方法来触发 activity 对应的生命周期回调。
+- ActiviyThread.main 会通过 binder 告诉 ATMS，APP 已经创建好了。
+- ATMS 收到消息后，从刚才缓存的信息中拿出需要启动的 Activity 信息，并通过 binder 触发 ApplicationThread 的 handlerLaunchActivity 方法，这个方法中会创建 Context、Applcation 对象以及 activity 对象。并将 activity.attach(context, application,...) 等信息关联起来。随后调用 activity.onCreate 方法。
+- ATMS 会在合适的时候，通过 binder 触发 ApplicationThread 的 handlerStartActivity、handlerResumeActivity 等方法来触发 activity 对应的生命周期回调。
 
 
 上面多次提到了 ActivityThread 和 ApplicationThread, 其两者的关系如下：
-1. ApplicationThread 是 ActivityThread 的内部类，其实现了 binder 接口，用于和 AMS 进行通信。
-2. ApplicationThread 收到 AMS 的消息后，会使用 sendMessage 触发 ActivityThread 对应的方法。
+1. ApplicationThread 是 ActivityThread 的内部类，其实现了 binder 接口，用于和 ATMS 进行通信。
+2. ApplicationThread 收到 ATMS 的消息后，会使用 sendMessage 触发 ActivityThread 对应的方法。
 
 <img src="android/interview/core/resources/6.png" style="width:30%">
 
@@ -97,6 +97,37 @@ Activity 中持有了对 PhoneWindow、Application、ActivityThread、Instrument
 ## 深入理解 Window
 
 ## 深入理解 Service
+
+这里的 Service 是 Android 系统四大组件之一的 Service，和上面提到的 ATMS 有本质的区别，具体差别如下：
+
+<img src="android/interview/core/resources/7.png" style="width:60%">
+
+### Service 启动停止流程分析
+
+#### startService & stopService
+当我们在 context 的上下文中，就可以使用 context.startService 方法来启动一个服务。具体的流程其实和启动 Activity 非常类似。
+
+1. context.startService 通过 binder 给 AMS 发送启动服务请求。
+2. AMS 收到请求后，经过一些判断后，通过 binder 发送消息到 ApplicationThread， ApplicationThread 进一步调用 ActivityThread 的 handleCreateService 方法。
+3. handleCreateService 中创建对应的 Service，随后调用其 service.onCreate 方法。创建完成后，再通过 binder 通知 AMS，service 已经创建好了。
+4. AMS 收到 service 创建完成的信号后，会再一次通过 binder 发送消息到 ApplicationThread，并进一步触发 ActivityThread 的 handleServiceArgs 方法。
+5. 在 handleServiceArgs 中，会调用 service.onStartCommand 方法。
+6. 至此，service 创建完成。
+
+7. 如果后续调用 stopService。同样的通过 binder 发送到 AMS，AMS 做判断后会使用 binder 发送消息到 ApplicationThread，并进一步触发 ActivityThread 的 handleStopService 方法。
+8. 在 handleStopService 中会调用 service.onDestory 方法。
+
+#### bindSevice & unbindService
+
+与普通的 start 和 stop 不同，bind 会返回一个 IBinder 对象，用户可以通过这个 IBinder 对象来与 service 进行通信。
+
+1. context.bindService 通过 binder 给 AMS 发送绑定服务请求。
+2. AMS 如果发现 service 没有创建会和之前一样 先 binder 调用 ActivityThread 的 handleCreateService 方法。
+3. AMS 收到 service 创建完成的信号后，会再一次通过 binder 发送消息到 ApplicationThread，并进一步触发 ActivityThread 的 handleBindService 方法。
+4. handleBindService 会返回 IBinder 对象给 AMS。
+5. AMS 把这个对象返回给客户端。
+6. 客户端如果和 Service 一个进程，这个 IBinder 就是本地对象，无 IPC 开销。如果是其余进程，那 IBinder 后续基于 binder 做通信。
+
 
 ## 深入理解 BroadCast
 
