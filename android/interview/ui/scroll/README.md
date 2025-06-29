@@ -151,14 +151,153 @@ class SeekBarDemoActivity : Activity() {
 
 ```
 
-## ViewPager
+## ViewFlipper
 
-## SlidingMenu
+ViewFlipper 是 Android 提供的一个用于在多个视图之间切换的控件，适合实现图片轮播、引导页、广告切换等场景。它内部其实就是一个 ViewGroup，每次只显示其中的一个子 View，通过动画切换来达到“翻页”的效果。
 
+### 使用
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <ViewFlipper
+        android:id="@+id/viewFlipper"
+        android:layout_width="match_parent"
+        android:layout_height="200dp">
+        <ImageView
+            android:src="@drawable/app_icon"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"/>
+        <ImageView
+            android:src="@drawable/ic_launcher_foreground"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"/>
+        <ImageView
+            android:src="@drawable/ic_launcher_background"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="centerCrop"/>
+    </ViewFlipper>
+
+</LinearLayout>
+```
+
+```kotlin
+class ViewFlipperActivity : Activity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_view_flipper)
+        val viewFlipper = findViewById<ViewFlipper>(R.id.viewFlipper)
+        viewFlipper.flipInterval = 2000 // 2秒切换
+        viewFlipper.isAutoStart = true
+        // 设置动画
+        viewFlipper.inAnimation = AnimationUtils.loadAnimation(this, android.R.anim.fade_in)
+        viewFlipper.outAnimation = AnimationUtils.loadAnimation(this, android.R.anim.fade_out)
+        // 开始轮播
+        viewFlipper.startFlipping()
+    }
+}
+```
 
 ## RecyclerView
 
-## ViewFlipper
+相比于 ListView，RecyclerView 具有如下的优势：
 
-## Android-PullToRefresh
+<img src="android/interview/ui/scroll/resources/1.png" style="width:80%">
+
+### 使用
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:id="@+id/root">
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/recyclerView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"/>
+
+</LinearLayout>
+```
+
+自定义 Adapter。
+
+```kotlin
+class MainPageRecycleViewAdapter(private val items: List<ListItem>, private val onItemClick: (ListItem) -> Unit) :
+    RecyclerView.Adapter<MainPageRecycleViewAdapter.ViewHolder>() {
+    inner class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        val title: TextView = itemView.findViewById(R.id.itemTitle)
+        val description: TextView = itemView.findViewById(R.id.itemDescription)
+
+        init {
+            itemView.setOnClickListener {
+                val position = adapterPosition
+                if (position != RecyclerView.NO_POSITION) {
+                    onItemClick(items[position])
+                }
+            }
+        }
+    }
+
+    override fun onCreateViewHolder(
+        parent: ViewGroup,
+        viewType: Int,
+    ): ViewHolder {
+        val view =
+            LayoutInflater.from(parent.context)
+                .inflate(R.layout.main_page_list_item, parent, false)
+        return ViewHolder(view)
+    }
+
+    override fun onBindViewHolder(
+        holder: ViewHolder,
+        position: Int,
+    ) {
+        val item = items[position]
+        holder.title.text = item.title
+        holder.description.text = item.description
+    }
+
+    override fun getItemCount() = items.size
+}
+```
+
+Activity 中配置 RecycleView.
+
+```kotlin
+class MainActivity : Activity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+        val recyclerView = findViewById<RecyclerView>(R.id.recyclerView)
+
+        recyclerView.layoutManager = LinearLayoutManager(this)
+
+        val adapter =
+            MainPageRecycleViewAdapter(MainPageData.ITEMS) { item ->
+                val intent = Intent(this, item.activity)
+                startActivity(intent)
+            }
+
+        recyclerView.adapter = adapter
+    }
+}
+```
+
+## SwipeRefreshLayout
+
+## DrawerLayout
+
+## ViewPager
+
 
