@@ -48,6 +48,51 @@ host.dispatchAttachedToWindow(mAttachInfo, 0);
 
 ## 深入理解 Activity
 
+### 什么是 Activity？
+
+Activity 是 Android 应用中的一个组件（Component），用于承载和管理用户界面（UI）以及与用户的交互。每个 Activity 通常对应一个用户可以看到和操作的界面，比如登录页、主页面、设置页等。
+
+其主要作用如下：
+- 管理应用的窗口和界面布局。
+- 响应用户的输入（比如点击、滑动等）。
+- 启动其他 Activity 或与其他应用进行交互。
+
+### Activity 类结构
+
+<img src="android/interview/core/resources/4.png" style="width:20%">
+
+Activity 继承自 Context，同时实现了一系列的接口。
+
+Activity 中持有了对 PhoneWindow、Application、ActivityThread、Instrumentation 等关键对象的引用，这些引用一般是在 attach 函数被调用的时候传入的。
+
+### Activity 创建流程
+
+<img src="android/interview/core/resources/5.png" style="width:100%">
+
+我们下面以一个应用完全启动的流程为例来讲解 Activity 创建的流程。
+
+1. 用户点击桌面的 APP 图标
+
+所谓的手机桌面本身也是一个应用，桌面的图标不过是一些 Button 而已，而这些 Button 对于点击事件的响应恰好是打开对应的应用，因此当你点击了某个 APP icon 的时候，实际上是在桌面应用中调用了 startActivity 方法。那 startActivity 的目标是哪个 Activity 呢？ 就是你在 AndroidManife 文件中指定的 launch activity。
+
+2. 发送 Activity 创建消息
+
+桌面应用 startActivity 会通过底层 binder 驱动将启动消息发送给 AMS 服务。AMS 是一个运行在独立进程的系统服务。AMS 收到这个请求后，首先进行一些权限检查，如果没有通过权限检查就会启动失败，并抛出异常。如果权限校验通过，就会去判断 Activity 所在的应用是不是已经存在了，如果存在，就直接通过 binder 触发对应 APP 进程的 ApplicationThread proxy。让他执行 activity 创建工作。
+
+如果对应的 APP 不存在，
+- 会首先将本次启动 Activity 的信息存储起来，随后触发 zygote 创建对应的应用。在触发后，AMS 不会阻塞，而是转头去接受其他的请求。
+- zygote fork 新的 app 进程，并通过反射调用 ActiviyThread.main 方法。
+- ActiviyThread.main 会通过 binder 告诉 AMS，APP 已经创建好了。
+- AMS 收到消息后，从刚才缓存的信息中拿出需要启动的 Activity 信息，并通过 binder 触发 ApplicationThread 的 handlerLaunchActivity 方法，这个方法中会创建 Context、Applcation 对象以及 activity 对象。并将 activity.attach(context, application,...) 等信息关联起来。随后调用 activity.onCreate 方法。
+- AMS 会在合适的时候，通过 binder 触发 ApplicationThread 的 handlerStartActivity、handlerResumeActivity 等方法来触发 activity 对应的生命周期回调。
+
+
+上面多次提到了 ActivityThread 和 ApplicationThread, 其两者的关系如下：
+1. ApplicationThread 是 ActivityThread 的内部类，其实现了 binder 接口，用于和 AMS 进行通信。
+2. ApplicationThread 收到 AMS 的消息后，会使用 sendMessage 触发 ActivityThread 对应的方法。
+
+<img src="android/interview/core/resources/6.png" style="width:30%">
+
 
 ## 深入理解 Window
 
