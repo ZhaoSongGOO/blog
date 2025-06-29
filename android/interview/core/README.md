@@ -6,7 +6,7 @@
 
 我们首先列举出这几个对象之间的 UML 图，下面会通过几个阶段来解释这个 UML 的形成过程。
 
-<img src="android/interview/core/resources/3.png" style="width:100%">
+<img src="android/interview/core/resources/3.png" style="width:70%">
 
 ### Attach 阶段
 
@@ -131,4 +131,36 @@ Activity 中持有了对 PhoneWindow、Application、ActivityThread、Instrument
 
 ## 深入理解 BroadCast
 
+在 Android 中，我们可以自定义自己的广播接收者，并通过动态或者静态注册的方式注册这些接收者。这些接收者按照一定的规则会收到对应的广播信息。
+
+### 注册接收者与解注册接收者
+
+<img src="android/interview/core/resources/9.png" style="width:100%">
+
+1. 当我们用户在 register 一个广播 receiver 的时候，首先会创建一个 ReceiverDispatcher 对象，这个对象内部持有了 receiver，同时内部实现了一个 binder 接口对象 IIntentReceiver 对象。
+2. 随后通过 binder 调用 AMS 的register 方法，AMS register 的时候将 receiver 信息和 IIntentReceiver.proxy 对象进行存储。
+3. 当有广播收到的时候，AMS 会依据 receiver 和广播信息比对，找到对一个的 IIntentReceiver.proxy，这个对象调用会传递到具体的应用进程的 IIntentReceiver.Stub 中，进而通过 ReceiverDispatcher 触发对应的 receiver 接收信息。
+
+
+### 发送广播
+
+发送广播就很简单了，sendBroadCast 直接通过 binder 触发 AMS 的 broadcastIntentWithFeature 方法即可。
+
 ## 深入理解 ContentProvider
+
+我们在使用 ContentProvider 的时候会通过 Context 的 getContentResolver 函数来进行操作，例如下面这样。
+
+```kotlin
+val uri = Uri.parse("content://com.uiapp.lion.content.provider/english")
+getContentResolver().delete(uri, "name = ?", arrayOf("NewBee"))
+```
+
+整体的过程如下所示。
+
+<img src="android/interview/core/resources/8.png" style="width:100%">
+
+1. Context 内部的 ContentResolver 的具体实现是 ApplicationContentResolver，其内部 delete 的时候，会调用 binder 到 AMS 获取对应的 ContentProvider。
+2. AMS 返回 ContentProvider 的客户端代理 IContentProvider。
+3. IContentProvider 与 服务端对象 ContentProviderTransport 进行通信来对真正的 ContentProvider 进行操作。
+    - 如果同进程的 ContentProvider，这个 IContentProvider 就是本地对象调用 ContentProviderTransport，没有 IPC 开销。
+    - 如果是其余进程的，这个 IContentProvider 将会通过 binder 与 ContentProviderTransport 通信。
