@@ -833,10 +833,136 @@ var trans = object :Transform<Base> {
 
 #### 什么是协程？
 
-协程是一种更加高效的线程资源使用方式，在我们往常的多线程开发环境下，如果我们一个线程在做 IO 操作，在我们没有使用阻塞 IO 主动放弃 CPU 竞争的时候，我们需要轮询等待 IO 返回。
-此时线程没有做任何的处理，但是仍然参数 CPU 竞争。如果有协程，我们可以在这个线程中把这个轮询操作变成一个协程，在其发起 IO 请求的时候主动放弃协程调度，转而去执行其他逻辑，此时我们的线程仍然在做真正的计算工作，而不是空转。
+之前我们或多或少的都听过协程，每个人都提到其最关键的特征就是在同一个线程上实现任务的并发执行，在这种潜移默化的影响下，我们就会认为协程和传统线程并发是完全不同的的一种并发策略，凡是涉及到协程就不会有线程，但这种理解是错误的，其实呢，协程是一种软件管理的更加高效的多线程开发策略。
 
-所以关键点是如何定义一个协程以及协程在什么时候会让出调度。
+可以认为协程是对多线程开发的封装，它通过语法糖屏蔽了底层多线程开发的细节，使用默认线程池提高线程复用率，将线程的创建控制起来，避免了无限的创建导致的 OOM。
+
+#### 协程状态机对象
+
+<img src="languages/kotlin/resources/6.png" height="200" />
+
+kotlin 以挂起函数为节点将整个代码划分成多个状态，一个 launch 函数内部包裹的代码或者一个 suspend 函数都会被编译成一个状态机对象。例如下面的代码，其中 delay 就是一个挂起函数，因此以此为界限，下面的代码可以划分为三个状态。
+
+```kotlin
+launch {
+    println("Hello")
+    delay(1000)
+    println("World")
+    delay(2000)
+    println("!")
+}
+```
+
+1. 状态1：
+```kotlin
+println("Hello")
+delay(1000)
+```
+
+2. 状态2：
+```kotlin
+println("World")
+delay(2000)
+```
+
+3. 状态3：
+```kotlin
+println("!")
+```
+
+这三个状态被进一步包装成一个状态机对象，状态机对象就是协程调度器的最小操作单元。下面描述一下调度器是如何调度这个状态机对象的。
+
+1. 首先将 MyCoroutine.resumeWith 方法封装成一个 runnable ，拋送到对应的线程队列中执行。
+    - 初始 label 是 0，进入第一个状态。
+    - 打印 "Hello"。
+    - 更新 label 为 1。
+    - 调用 delay 函数，delay 函数是一个挂起函数，本身也是一个状态机。
+        - 进入 delay 状态机，当前状态是 0
+        - 设置异步定时器，在定时器回调中，重新执行外围的状态机。通过 resume。
+    - 返回。
+2. 定时器回调 cont.resume(Unit)，cont 持有外围协程 MyCoroutine 的引用。
+    - 调度器包装 MyCoroutine.resumeWith 为一个 runnable，拋送到对应的线程队列中执行。
+    - 此时 label 是 1，进入第二个状态。
+    - println("World")。
+    - 更新 label 为 2。
+    - 调用 delay 函数。
+        - 进入 delay 状态机，当前状态是 0
+        - 设置异步定时器，在定时器回调中，重新执行外围的状态机。通过 resume。
+    - 返回。
+3. 定时器回调 cont.resume(Unit)，cont 持有外围协程 MyCoroutine 的引用。
+    - 调度器包装 MyCoroutine.resumeWith 为一个 runnable，拋送到对应的线程队列中执行。
+    - 此时 label 是 2，进入第三个状态。
+    - println("!")。
+    - completion.resumeWith(Result.success(Unit))，整个外围协程结束。
+
+```kotlin
+class MyCoroutine(
+    val completion: Continuation<Unit>
+) : Continuation<Unit> {
+    var label = 0
+    var result: Any? = null
+
+    override fun resumeWith(result: Result<Unit>) {
+        this.result = result
+        try {
+            when (label) {
+                0 -> {
+                    println("Hello")
+                    label = 1
+                    val d = delay(1000, this)
+                    if (d == COROUTINE_SUSPENDED) return
+                }
+                1 -> {
+                    println("World")
+                    label = 2
+                    val d = delay(2000, this)
+                    if (d == COROUTINE_SUSPENDED) return
+                }
+                2 -> {
+                    println("!")
+                    // 协程结束
+                    completion.resumeWith(Result.success(Unit))
+                }
+            }
+        } catch (e: Throwable) {
+            completion.resumeWith(Result.failure(e))
+        }
+    }
+}
+```
+
+delay 函数的状态机对象
+```kotlin
+class DelayContinuation(
+    val completion: Continuation<Unit>
+) : Continuation<Unit> {
+    var label = 0
+    var result: Any? = null
+    override fun resumeWith(result: Result<Unit>) {
+        this.result = result
+        when (label) {
+            0 -> {
+                label = 1
+                // 进入 suspendCancellableCoroutine 挂起点
+                suspendCancellableCoroutine<Unit> { cont ->
+                    if (timeMillis <= 0) {
+                        cont.resume(Unit) // 立即恢复
+                    } else {
+                        // 注册定时器，到点后 cont.resume(Unit)
+                    }
+                }
+                // 挂起后，返回
+                return
+            }
+            1 -> {
+                // delay 完成，协程恢复
+                completion.resumeWith(Result.success(Unit))
+            }
+        }
+    }
+}
+
+```
 
 #### 协程调度策略
 
@@ -865,8 +991,7 @@ var trans = object :Transform<Base> {
 先总结回答:
 - GlobalScope 和 runningBlock 可以在任何地方调用
 - CoroutineScope 只可以在协程作用域或者挂起函数中调用
-- launch 只能在协程作用域中调用
-- 
+- launch 只能在协程作用域中调用 
 
 1. GlobalScope + launch
 
@@ -887,7 +1012,7 @@ GlobalScope.launch {
 2. runBlocking 
 
 - 在其内部创建的协程都叫做子协程。
-- runBlocking 会阻塞当前线程，知道其内部所有内容以及子协程执行完成。
+- runBlocking 会阻塞当前线程，直到其内部所有内容以及子协程执行完成。
 
 ```kotlin
 runBlocking {
@@ -903,7 +1028,7 @@ runBlocking {
 
 3. CoroutineScope
 
-其会在内部所有协程执行完成之间，阻塞外部携程
+其会在内部所有协程执行完成之间，阻塞外部协程
 ```kotlin
     runBlocking {
         coroutineScope {
@@ -950,7 +1075,7 @@ Thread.sleep(1000)
 
 - async 只可以在协程作用域中调用
 - async 会创建一个子协程，同时返回一个 Deferred<T> 类型。
-- 对 Deferred<T> 调用 await 阻塞当前携程，等待结果。
+- 对 Deferred<T> 调用 await 阻塞当前协程，等待结果。
 
 ```kotlin
 launch{
