@@ -573,11 +573,37 @@ protected void onLayout(boolean changed, int left, int top, int right, int botto
 
 <img src="android/interview/view-mld/resources/mld_12.png" style="width:100%">
 
+### 关键的概念
+
+<img src="android/interview/view-mld/resources/mld_15.png" style="width:30%">
+
+1. Canvas
+
+Android 暴露给应用的一个绘图对象，这个对象在硬件绘制和软件绘制模式下有不同的变体。
+> 硬绘和软绘的最主要区别在于 bitmap 的生成借助的是 GPU 算力还是 CPU 算力。
+- 软件绘制下直接生成 bitmap，bitmap 交给 Surface 直接存储。
+- 硬件绘制下则是生成 displayList，即一些对 GPU 的操作指令，这些指令作用于 OpenGL 以驱动 GPU 生成 bitmap。bitmap 后续再交给 Surface 直接存储
+
+2. Surface
+
+像素 bitmap 缓冲区，保存每个应用窗口的像素内容。后续等待 SurfaceFlinger 合成上屏。
+
+3. OpenGL
+
+绘图标准指令集，几乎所有的 GPU 驱动都实现了 OpenGL 指令到 GPU 绘图指令的转换。
+
+4. SurfaceFlinger
+
+收集所有 Surface（系统UI、App、壁纸等）合成一张完整的屏幕画面，并最终输出到物理屏幕。
+
 ### 整体流程
 
 1. 和前面一致，在 `VSync` 触发后，`ViewRootImpl` 的遍历回调中会在 `measure` 和 `layout` 完成后，进行 `performDraw` 过程。
 2. `performDraw` 上来会判断是不是支持了硬件绘制，如果支持就走硬件绘制，否则就走软件绘制。
-3. 这里只看软件绘制，软件绘制会和上面一样，直接调用 `mDecorView` 的 `draw` 进行绘制。调用 draw 方法传入了一个 canvas 对象。
+    - 如果软件绘制，就直接调用 `mDecorView` 的 `draw` 进行绘制。调用 draw 方法传入了一个 BitMapCanvas 对象。
+    - 如果是硬件绘制，调用 `mDecorView` 的 `updateDisplayListIfDirty` 方法进行绘制，此时传入的 canvas 是一个 RecordingCanvas 对象。RecordingCanvas 会将具体的canvas操作转换成 displayList。
+        - updateDisplayListIfDirty 先判断是不是 dirty，如果不是就直接返回。
+        - 如果是 dirty 的话，就调用 draw 方法，生成新的 DisplayList。
 4. draw 方法基本进行下面四个主要步骤：
     1. drawBackground: 背景色，背景图等。
     2. onDraw：绘制自身。
@@ -586,32 +612,62 @@ protected void onLayout(boolean changed, int left, int top, int right, int botto
 
 ### 硬绘与软绘
 
-硬绘流程：
 
-<img src="android/interview/view-mld/resources/mld_13.png" style="width:100%">
+除了上文提到的 bitmap 生成用的算力的区别之外，两者还有如下区别。
 
-1. 记录绘制命令：
-主线程遍历 View 树，生成 DisplayList（GPU 指令集合）。
+#### 视图更新策略差异
 
-2. 异步执行：
-RenderThread 将 DisplayList 提交给 GPU。
+硬件绘制相比于软件绘制更高效，除去硬件的差异外，还有就是处理视图更新策略的差异。
+- 硬件绘制采用 dirty 标记来标识当前视图是不是需要更新。
+- 软件绘制采用脏区区域交集的方式来判断当前视图是是不是需要更新。
 
-3. GPU 渲染：
-GPU 直接操作纹理，结果存入 GraphicBuffer。
+下面展示了一个视图树，其中红色的视图是产生 UI 变化的视图，即需要重绘的视图。
 
-4. 合成显示：
-通过 SurfaceFlinger 合成到屏幕。
+<img src="android/interview/view-mld/resources/mld_16.png" style="width:30%">
+
+1. 硬件绘制策略
+- 首先，在视图 UI 属性发生变化时，会向上将其所有的祖先节点标记为 dirty。
+- 硬件绘制会判断当前视图是否标记为 dirty，不是 dirty 就直接复用之前的 displayList 并结束遍历。
+- 如果是 dirty，那就更新 displayList。同时调用子视图的 updateDisplayListIfDirty 方法。
+
+按照这个描述，在一次硬件绘制过程中，基本只会遍历标记为 dirty 的节点，没有标记为 dirty 的节点在第一次遍历就会及时返回，不会继续遍历非 dirty 视图的子视图。
+
+<img src="android/interview/view-mld/resources/mld_17.png" style="width:30%">
+
+2. 软件绘制策略
+- 首先在视图属性发生变化时，会将变化视图所在的矩形区域上报到 ViewRootImpl, 记录为脏区，在一次 VSync 周期内，多次上报会被合并。所以最后脏区是一个或多个矩形区域。
+- 软件绘制会判断当前视图是否和脏区有交集，如果有交集就会调用自己的 draw 以及 ondraw 方法。同时遍历子节点。
+- 子节点重复上面的步骤，直至所有的节点遍历完成。
+
+可以看出，软件绘制过程会按照深度优先的顺序遍历整个视图树，相比于硬件绘制确实更加的低效。
+
+那有人就说为啥要遍历所有的视图呢，如果父节点和脏区没有交集，是不是就可以跳过子节点判断呢？
+
+是不行的，因为 Andoroid 里面子视图可以超出父节点的区域而存在。就算父节点和脏区没有交集，但是子节点可能恰好在脏区内部。
+
+<img src="android/interview/view-mld/resources/mld_18.png" style="width:40%">
 
 
-软绘流程：
 
-<img src="android/interview/view-mld/resources/mld_14.png" style="width:100%">
+#### 视图树与绘制指令分离
 
-1. 主线程绘制：
-直接调用 View 的 draw() 方法，在 Canvas（关联 Bitmap）上绘制像素。
+<img src="android/interview/view-mld/resources/mld_19.png" style="width:30%">
 
-2. 内存拷贝：
-将 Bitmap 数据拷贝到 Surface 的缓冲区。
+前面提到的 displayList，在 AF 中是以 RenderNode 的形式进行存储。每一个视图都对应一个 RenderNode，这个 RenderNode 作为容器存储着这个视图所有的绘制指令 displayList。
 
-3. 阻塞提交：
-通过 Surface.unlockCanvasAndPost() 提交数据，可能阻塞主线程。
+1. 高效的更新与复用
+- 在 View 没有变化的时候，直接复用上一次 RenderNode 的绘制指令。
+- 发生变化时基于硬件绘制 dirty 标记更新的机制，只更新产生变化的视图的 RenderNode。
+
+2. 硬件效果增强
+RenderNode 还可以独立设置各种硬件属性（如平移、缩放、旋转、透明度、阴影等），这些属性直接由 GPU 处理。
+
+这样做的话，一方面 GPU 在处理这些特效的效率要比 CPU 高，同时设想下面的场景。
+
+我如果更新了某个视图的透明度，按照软绘的描述我们需要更新对应的属性，触发 performDraw，在 performDraw 过程中进行遍历生成对应的 bitmap。
+
+假如没有 RenderNode 就算在硬绘场景下，也需要遍历一部分节点，更新 dirty 结点的 displayList 才行。
+
+但是有了 RenderNode，我们透明度的变化没有标记任何节点为 dirty，而是直接修改了对应节点的 RenderNode 属性，这样在硬件绘制阶段不会触发任何的视图遍历。
+
+
