@@ -2205,6 +2205,8 @@ cursor.close()
 
 ### LitePal 数据库框架
 
+### Room 数据库操纵
+
 
 --- 
 
@@ -2439,8 +2441,180 @@ Retrofit 是一个高层的网络客户端工具，底层可以基于 OkHttp 以
 
 ### 操作符
 
---- 
+---
 
+## LiveData
+
+> 这部分内容来自于 《第一行代码》
+
+### 什么是 LiveData？
+
+LiveData 类似于 React 框架里面 useState 的状态一样，是一种响应式数据更新框架。视图可以对数据进行观察者注册，这样在数据发生更新的时候，会自动通知视图更新。
+
+### 简单使用
+
+```kotlin
+class MainViewModel(countReserved: Int) : ViewModel() {
+
+    val counter = MutableLiveData<Int>()
+
+    init {
+        counter.value = countReserved
+    }
+
+    fun plusOne() {
+        val count = counter.value ?: 0
+        counter.value = count + 1
+    }
+
+    fun clear() {
+        counter.value = 0
+    }
+
+}
+
+class MainActivity : AppCompatActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        plusOneBtn.setOnClickListener {
+            viewModel.plusOne()
+        }
+        clearBtn.setOnClickListener {
+            viewModel.clear()
+        }
+        viewModel.counter.observe(this, Observer { count ->
+            infoText.text = count.toString()
+        })
+    }
+}
+
+```
+
+### 数据安全暴露
+
+以上就是LiveData的基本用法。虽说现在的写法可以正常工作，但其实这仍然不是最规范的LiveData用法，主要的问题就在于我们将counter这个可变的LiveData暴露给了外部。这样即使是在ViewModel的外面也是可以给counter设置数据的，从而破坏了ViewModel数据的封装性，同时也可能带来一定的风险。
+
+这里先将原来的counter变量改名为_counter变量，并给它加上private修饰符，这样_counter变量对于外部就是不可见的了。然后我们又新定义了一个counter变量，将它的类型声明为不可变的LiveData，并在它的get()属性方法中返回_counter变量。这样，当外部调用counter变量时，实际上获得的就是_counter的实例，但是无法给counter设置数据，从而保证了ViewModel的数据封装性。
+
+```kotlin
+class MainViewModel(countReserved: Int) : ViewModel() {
+
+    val counter: LiveData<Int>
+        get() = _counter
+
+    private val _counter = MutableLiveData<Int>()
+
+    init {
+        _counter.value = countReserved
+    }
+
+    fun plusOne() {
+        val count = _counter.value ?: 0
+        _counter.value = count + 1
+    }
+
+    fun clear() {
+        _counter.value = 0
+    }
+
+}
+```
+
+### map 进行数据选择性暴露
+
+map()方法，这个方法的作用是将实际包含数据的LiveData和仅用于观察数据的LiveData进行转换。
+
+比如说有一个User类，User中包含用户的姓名和年龄，定义如下，如果Activity中明确只会显示用户的姓名，而完全不关心用户的年龄，那么这个时候还将整个User类型的LiveData暴露给外部，就显得不那么合适了。
+```kotlin
+data class User(var firstName: String, var lastName: String, var age: Int)
+
+class MainViewModel(countReserved: Int) : ViewModel() {
+
+    private val userLiveData = MutableLiveData<User>()
+    // 外部使用的时候只要观察userName这个LiveData就可以了。
+    // 当userLiveData的数据发生变化时，map()方法会监听到变化并执行转换函数中的逻辑，然后再将转换之后的数据通知给userName的观察者。
+    val userName: LiveData<String> = userLiveData.{ user ->
+        "${user.firstName} ${user.lastName}"
+    }
+}
+```
+
+### switchMap 以不变应万变
+
+有时候，我们的 LiveData 数据并不是在 ViewModel 中建立，而是来自于 Model 的数据请求，例如每次 Model 从数据库中拿到一个数据，都会返回一个 LiveData。那此时就会有问题了，我们对之前旧的 LiveData 的监听就失效了。
+
+```kotlin
+object Repository {
+
+    fun getUser(userId: String): LiveData<User> {
+        val liveData = MutableLiveData<User>()
+        liveData.value = User(userId, userId, 0)
+        return liveData
+    }
+
+}
+
+class MainViewModel(countReserved: Int) : ViewModel() {
+    ...
+    fun getUser(userId: String): LiveData<User> {
+        return Repository.getUser(userId)
+    }
+}
+
+// 失效，因为每次返回的 LiveData 都是变化的，甚至之前的 LiveData 自始至终都没有被更新过。
+viewModel.getUser(userId).observe(this) { user ->
+}
+```
+
+这个时候，switchMap()方法就可以派上用场了。正如前面所说，它的使用场景非常固定：如果ViewModel中的某个LiveData对象是调用另外的方法获取的，那么我们就可以借助switchMap()方法，将这个LiveData对象转换成另外一个可观察的LiveData对象。
+
+```kotlin
+class MainViewModel(countReserved: Int) : ViewModel() {
+    ...
+    private val userIdLiveData = MutableLiveData<String>()
+
+    val user: LiveData<User> = userIdLiveData.switchMap {
+        Repository.getUser(userId)
+    }
+
+    fun getUser(userId: String) {
+        userIdLiveData.value = userId
+    }
+}
+```
+
+switchMap()方法同样接收两个参数：第一个参数传入我们新增的userIdLiveData，switchMap()方法会对它进行观察；第二个参数是一个转换函数，注意，我们必须在这个转换函数中返回一个LiveData对象，因为switchMap()方法的工作原理就是要将转换函数中返回的LiveData对象转换成另一个可观察的LiveData对象。那么很显然，我们只需要在转换函数中调用Repository的getUser()方法来得到LiveData对象，并将它返回就可以了。
+
+为了让你能更清晰地理解switchMap()的用法，我们再来梳理一遍它的整体工作流程。首先，当外部调用MainViewModel的getUser()方法来获取用户数据时，并不会发起任何请求或者函数调用，只会将传入的userId值设置到userIdLiveData当中。一旦userIdLiveData的数据发生变化，那么观察userIdLiveData的switchMap()方法就会执行，并且调用我们编写的转换函数。然后在转换函数中调用Repository.getUser()方法获取真正的用户数据。同时，switchMap()方法会将Repository.getUser()方法返回的LiveData对象转换成一个可观察的LiveData对象，对于Activity而言，只要去观察这个LiveData对象就可以了。
+
+在刚才的例子当中，我们调用MainViewModel的getUser()方法时传入了一个userId参数，为了能够观察这个参数的数据变化，又构建了一个userIdLiveData，然后在switchMap()方法中再去观察这个LiveData对象就可以了。但是ViewModel中某个获取数据的方法有可能是没有参数的，这个时候代码应该怎么写呢？其实这个问题并没有想象中复杂，写法基本上和原来是相同的，只是在没有可观察数据的情况下，我们需要创建一个空的LiveData对象，示例写法如下：
+
+```kotlin
+class MyViewModel : ViewModel() {
+
+    private val refreshLiveData = MutableLiveData<Any?>()
+
+    val refreshResult = Transformations.switchMap(refreshLiveData) {
+        Repository.refresh()  // 假设Repository中已经定义了refresh()方法
+    }
+
+    fun refresh() {
+        refreshLiveData.value = refreshLiveData.value
+    }
+
+}
+```
+
+可以看到，这里我们定义了一个不带参数的refresh()方法，又对应地定义了一个refreshLiveData，但是它不需要指定具体包含的数据类型，因此这里我们将LiveData的泛型指定成Any?即可。接下来就是点睛之笔的地方了，在refresh()方法中，我们只是将refreshLiveData原有的数据取出来（默认是空）​，再重新设置到refreshLiveData当中，这样就能触发一次数据变化。是的，LiveData内部不会判断即将设置的数据和原有数据是否相同，只要调用了setValue()或postValue()方法，就一定会触发数据变化事件。然后我们在Activity中观察refreshResult这个LiveData对象即可，这样只要调用了refresh()方法，观察者的回调函数中就能够得到最新的数据。
+
+### LiveData 优势
+
+- LiveData在内部使用了Lifecycles组件来自我感知生命周期的变化，从而可以在Activity销毁的时候及时释放引用，避免产生内存泄漏的问题。
+
+- 另外，由于要减少性能消耗，当Activity处于不可见状态的时候（比如手机息屏，或者被其他的Activity遮挡）​，如果LiveData中的数据发生了变化，是不会通知给观察者的。只有当Activity重新恢复可见状态时，才会将数据通知给观察者，而LiveData之所以能够实现这种细节的优化，依靠的还是Lifecycles组件。
+
+- 如果在Activity处于不可见状态的时候，LiveData发生了多次数据变化，当Activity恢复可见状态时，只有最新的那份数据才会通知给观察者，前面的数据在这种情况下相当于已经过期了，会被直接丢弃。
+
+---
 
 ## 事件分发机制
 
