@@ -431,7 +431,7 @@ public abstract class Shape {
 - 继承抽象类，实现部分方法。
 
 
-## 泛型类与容器
+## 泛型类
 
 ### 泛型的设计目标与底层原理
 
@@ -655,6 +655,60 @@ T a = new T(); // error
 - 不能创建泛型数组
 
 为什么呢？在 java 里面，A 是 B 的基类，不同于泛型容器， B[] 可以直接赋值给 A[],这就会出现之前在协变章节提到的数据不安全问题。
+
+
+## 容器
+
+### 列表和队列
+
+#### ArrayList
+
+类似于 C++ 中的 vector，内部数据连续存储。尾部插入删除复杂度为 O(1), 整体插入删除平均复杂度为 O(n)。
+
+需要注意的是，我们不可以在迭代的过程中直接删除元素。但是在迭代过程中可以使用迭代器删除。
+
+```java
+ArrayList<Integer> data = new ArrayList<Integer>();
+data.add(1);
+data.add(2);
+Iterator<Integer> i = data.iterator();
+while(i.hasNext()){
+    i.next(); // 必须先 next，设置状态
+    i.remove();
+}
+```
+
+#### LinkedList
+
+底层是双向列表，其同时实现了 Queue 和 Deque 接口，可以来当队列、双端队列以及栈来使用。当然如果需要栈，可以直接使用 Stack 容器，这个容器是线程安全的。
+
+
+### Map 和 Set
+
+#### HashMap
+
+底层基于 HashTable, 数据无序存储。插入查找速率 O(1)。使用 k 计算 hashcode， 存储 <k, v> 到对应 hashcode 的桶下。一个 k 只会存储一份。但是不同的 k 可能会计算得到相同的 hashcode，这就是 hash 碰撞，此时会把这些具有相同 hashcode 的元素以单向链表的形式保存在一个桶下。
+
+#### HashSet
+
+底层基于 HashMap, 数据无序存储，数据无重复。以 元素为 k，固定值为 v，使用 HashMap 去存储。
+
+#### TreeMap
+
+底层基于排序树，数据有序存储。
+
+#### TreeSet
+
+底层基于 TreeMap
+
+#### LinkedHashMap
+
+是 HashMap 的子类，但是其可以确保访问顺序和插入顺序一致。
+
+#### PriorityQueue
+
+底层基于堆，优先级队列。
+
 
 ## 并发
 
