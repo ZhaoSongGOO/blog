@@ -712,7 +712,114 @@ while(i.hasNext()){
 
 ## 并发
 
+### 线程基础使用
+
+在 java 中线程有两种基础使用方法。
+
+1. 继承 Thread，实现 run 方法。
+
+2. 继承 Runnable 接口，实现 run 方法，进而将这个实现了 run 方法的对象实例作为 Thread 的参数。
+
+### 线程的属性
+
+1. id： 线程具有一个 id 属性，每创建一个新的线程，这 id 都会自增。
+2. name：每个线程都有一个名字，我们可以在构造线程的时候或者通过 setName 设置他的名字。
+3. 优先级：java 线程总共有 1-10 共 10 个语言级别的优先级(默认为 5)，具体对应系统的优先级则视系统而定，优先级不可靠，只是对系统的建议。
+```java
+    public final void setPriority(int newPriority)
+    public final int getPriority()
+```
+4. state: 线程有状态，可以通过 getState 接口获取线程状态。
+
+- NEW: 没有调用 start 的线程状态是 NEW。
+- TERMINATED:线程运行结束后状态为TERMINATED。
+- RUNNABLE: 调用start后线程在执行run方法且没有阻塞时状态为RUNNABLE，不过，RUNNABLE不代表CPU一定在执行该线程的代码，可能正在执行也可能在等待操作系统分配时间片，只是它没有在等待其他条件。
+- BLOCKED: 如果一个线程被放置在等待队列，等待锁的时候，就是 BLOCKED 状态。
+- WAITING: wait(0), 无限期的 wait，就会进入 waiting 状态。
+- TIMED_WAITING: 线程调用 sleep，或者 带有明确时间的 wait();
+
+```java
+public enum State {
+    NEW,
+    RUNNABLE,
+    BLOCKED,
+    WAITING,
+    TIMED_WAITING,
+    TERMINATED;
+}
+```
+5. daemon: 前面我们提到，启动线程会启动一条单独的执行流，整个程序只有在所有线程都结束的时候才退出，但daemon线程是例外，当整个程序中剩下的都是daemon线程的时候，程序就会退出。
+
+6. sleep: Thread有一个静态的sleep方法，调用该方法会让当前线程睡眠指定的时间，单位是毫秒。睡眠期间，该线程会让出CPU，但睡眠的时间不一定是确切的给定毫秒数，可能有一定的偏差，偏差与系统定时器和操作系统调度器的准确度和精度有关。睡眠期间，线程可以被中断，如果被中断，sleep会抛出InterruptedException。
+
+7. yield：是一个静态方法，调用该方法，是告诉操作系统的调度器：我现在不着急占用CPU，你可以先让其他线程运行。
+8. join：Thread有一个join方法，可以让调用join的线程等待该线程结束。
+
+### 解决数据竞争
+
+#### synchronized
+
+synchronized 可以用来修饰类方法，实例方法以及代码块，其本质就是加锁过程。你可以用任意的一个对象来作为锁，每一个 Object 都持有了一把锁和一个等待队列，synchronized 会先尝试去加锁，加锁成功就执行，失败就把自己放到等待队列里面阻塞。等锁释放后，会在等待队列中随机唤醒一个线程。
+
+当我们使用 synchronized 直接修饰函数的时候，会对锁做隐式使用。
+- 对于类方法来说，这个锁就是 类对象。例如 class A 的 类对象是 A.class.
+```java
+public static synchronized void function(){
+
+}
+```
+- 对于实例方法，默认是 this。
+
+```java
+public synchronized void function(){
+
+}
+```
+- 对于代码块，则需要我们自己手动指定。
+
+```java
+class A///
+
+private Object lock;
+public static void function(){
+    synchronized(A.class){ // 或者使用 synchronized(lock){} 都可以，任何一个对象都可以做锁。
+
+    }
+}
+```
+
+其次，synchronized 是可重入的，如果当前线程想要获取一个锁，而这个锁恰好被自己持有，那不会阻塞，而是继续执行，就避免了尝试获取已获取锁的死锁问题。 
+
+### 线程的基本协作机制
+
+每一个 Object 都有两个方法，wait 和 notify 以及一个条件队列。当一个线程调用 wait 方法的时候，就进入阻塞状态，并将当前线程放到这个对象的条件队列中。此时其他线程调用了这个对象的 notify 方法，就会唤醒条件队列中的一个阻塞线程。
+
+- wait/notify方法只能在synchronized代码块内被调用
+- wait的具体过程是：
+    - 把当前线程放入条件等待队列，释放对象锁，阻塞等待，线程状态变为WAITING或TIMED_WAITING。
+    - 等待时间到或被其他线程调用notify/notifyAll从条件队列中移除，这时，要重新竞争对象锁。
+        - 如果能够获得锁，线程状态变为RUNNABLE，并从wait调用中返回。
+        - 否则，该线程加入对象锁等待队列，线程状态变为BLOCKED，只有在获得锁后才会从wait调用中返回。
+
+
+### 线程的中断
+
+1. 线程可以使用 interrupt 接口来设置中断状态，但是线程是不是被中断还取决于线程状态和行为。
+
+- RUNNABLE：如果线程在运行中，且没有执行IO操作，interrupt()只是会设置线程的中断标志位，没有任何其他作用。线程应该在运行过程中合适的位置检查中断标志位。
+- WAITING/TIMED_WAITING：在这些状态时，对线程对象调用interrupt()会使得该线程抛出InterruptedException。
+- BLOCKED: 如果线程在等待锁，对线程对象调用interrupt()只是会设置线程的中断标志位，线程依然会处于BLOCKED状态，也就是说，interrupt()并不能使一个在等待锁的线程真正“中断“。
+- TERMINATED/NEW:如果线程尚未启动（NEW）​，或者已经结束（TERMINATED）​，则调用interrupt()对它没有任何效果，中断标志位也不会被设置
+
 ## 动态化
+
+### 反射
+
+### 注解
+
+### 动态代理
+
+### 类加载
 
 
 
