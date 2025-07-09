@@ -734,8 +734,8 @@ while(i.hasNext()){
 - NEW: 没有调用 start 的线程状态是 NEW。
 - TERMINATED:线程运行结束后状态为TERMINATED。
 - RUNNABLE: 调用start后线程在执行run方法且没有阻塞时状态为RUNNABLE，不过，RUNNABLE不代表CPU一定在执行该线程的代码，可能正在执行也可能在等待操作系统分配时间片，只是它没有在等待其他条件。
-- BLOCKED: 如果一个线程被放置在等待队列，等待锁的时候，就是 BLOCKED 状态。
-- WAITING: wait(0), 无限期的 wait，就会进入 waiting 状态。
+- BLOCKED: 如果一个线程被放置在等待队列，等待锁的时候，就是 BLOCKED 状态。目前来看使用 synchronized 被阻塞的时候会进入 BLOCKED 状态。
+- WAITING: 线程主动放弃cpu，等待被唤醒。wait(0), 无限期的 wait，就会进入 waiting 状态。使用 Lock 被阻塞会进入 WAITING 状态。
 - TIMED_WAITING: 线程调用 sleep，或者 带有明确时间的 wait();
 
 ```java
@@ -807,13 +807,187 @@ public static void function(){
 1. 线程可以使用 interrupt 接口来设置中断状态，但是线程是不是被中断还取决于线程状态和行为。
 
 - RUNNABLE：如果线程在运行中，且没有执行IO操作，interrupt()只是会设置线程的中断标志位，没有任何其他作用。线程应该在运行过程中合适的位置检查中断标志位。
-- WAITING/TIMED_WAITING：在这些状态时，对线程对象调用interrupt()会使得该线程抛出InterruptedException。
+- WAITING/TIMED_WAITING：在这些状态时，对线程对象调用interrupt()会使得该线程抛出InterruptedException, 但是不会设置 isInterrupt 状态。
 - BLOCKED: 如果线程在等待锁，对线程对象调用interrupt()只是会设置线程的中断标志位，线程依然会处于BLOCKED状态，也就是说，interrupt()并不能使一个在等待锁的线程真正“中断“。
 - TERMINATED/NEW:如果线程尚未启动（NEW）​，或者已经结束（TERMINATED）​，则调用interrupt()对它没有任何效果，中断标志位也不会被设置
+
+### 原子量
+
+Atomic 家族类本质上也是容器，通过对非原子类型进行封装，对外提供了一些原子类型的操作原语。
+
+例如 AtomicInteger，`AtomicInteger atom = new AtomicInteger(10);` 创建一个原子量，这个量你可以使用如下的方法进行原子更改。
+
+```java
+public final int getAndSet(int newValue) 
+
+public final boolean compareAndSet(int expectedValue, int newValue)
+//...
+```
+
+其中 `compareAndSet` 是所有操作的核心，其主要行为如下:
+1. 首先这个操作不会被跨线程中断，即原子性。
+2. 判断内部值是不是和 expectedValue 相等，相等就更新为 newValue，不相等就不做操作。
+3. 更新成功返回 true，否则返回 false。
+
+我们可以使用这个原子量来简单的实现一个乐观锁。
+
+```java
+public class MyLock {
+    private AtomicInteger status = new AtomicInteger(0);
+    public void lock() {
+        while(! status.compareAndSet(0, 1)) { // 判断原子量是不是0，如果是就更新，没有设置的话返回false，进入循环
+            Thread.yield(); // 循环中调用 yield，主动放弃本次调度，这不意味着这个线程被阻塞，而只是放弃本地调度，后续仍然会被调度。
+        }
+    }
+    public void unlock() {
+        status.compareAndSet(1, 0); // 解锁的时候，就是对这个原子量进行-1操作。
+    }
+}
+```
+
+### 锁
+
+上文我们使用原子量自己实现了一个锁，其实 Java 默认就提供了多种基于原子量的锁，主要包含 Lock 和 ReadWriteLock。
+
+#### Lock
+
+Lock 是一个接口，主要提供下面的 API：
+
+```java
+public interface Lock {
+    // 获取锁以及释放锁，获取锁的时候，如果没有获取成功，会阻塞，和我们 上文的 yield 不一样，是真正不参与 cpu 调度，
+    // 这里底层是调用底层接口将当前线程阻塞，等这个 Lock 对象被调用 unLock 的时候会唤醒。
+    void lock();
+    void unlock();
+    // 可以响应中断
+    void lockInterruptibly() throws InterruptedException;
+    // 尝试获取锁，没有获取成功，返回 false，否则返回 true。
+    boolean tryLock();
+    boolean tryLock(long time, TimeUnit unit) throws InterruptedException;
+    // 新建一个条件变量。
+    Condition newCondition();
+}
+```
+
+下面来介绍一下 Lock 接口的关键子类 ReentrantLock (可重入锁)。从名字可以看出，其和 synchronized 关键字一样都具有可重入的特性，即同一个线程可以对同一把锁嵌套加锁而不会死锁，但是需要切记，必须成对的出现 unLock 才会确保锁被真正的释放。其底层基于原子量实现状态的原子化更改，同时依赖了底层的 LockSupport 库来实现线程状态的切换。
+
+LockSupport 提供了下面两个关键方法，park 使得当前线程放弃CPU，进入等待状态（WAITING）​，操作系统不再对它进行调度，什么时候再调度呢？有其他线程对它调用了unpark, unpark使参数指定的线程恢复可运行状态。park 可以响应中断，响应中断后直接返回 pack，所以我们通常需要再 pack 返回后判断一下状态是不是满足了在继续执行。
+
+```java
+public static void park()
+public static void unpark(Thread thread)
+```
+
+#### ReadWriteLock
+
+在某些场景下，例如有多个线程读取某个变量的数据，那此时就算大家一块读也没有什么问题，加锁就会带来性能影响，因此提供了读写锁，其主要特性如下：
+
+- 读锁可以同时被多个线程加锁。
+- 写锁只可以被一个线程加锁。
+- 如果当前有线程持有读锁，那任何线程无法对写锁加锁。
+- 如果当前有线程有写锁，那任何线程无法对读锁加锁。
+- 读写锁都是各自可重入的。
+
+```java
+public class SafeCache<K, V> {
+    private final Map<K, V> cache = new HashMap<>();
+    private final ReentrantReadWriteLock rwLock = new ReentrantReadWriteLock();
+    private final ReentrantReadWriteLock.ReadLock readLock = rwLock.readLock();
+    private final ReentrantReadWriteLock.WriteLock writeLock = rwLock.writeLock();
+
+    public V get(K key) {
+        readLock.lock();
+        try {
+            return cache.get(key);
+        } finally {
+            readLock.unlock();
+        }
+    }
+
+    public void put(K key, V value) {
+        writeLock.lock();
+        try {
+            cache.put(key, value);
+        } finally {
+            writeLock.unlock();
+        }
+    }
+}
+```
+
+### 显式条件
+
+```java
+        public class WaitThread extends Thread {
+            private volatile boolean fire = false;
+            private Lock lock = new ReentrantLock();
+            private Condition condition = lock.newCondition();
+            @Override
+            public void run() {
+                try {
+                    lock.lock();
+                    try {
+                        while (! fire) {
+                            condition.await();
+                        }
+                    } finally {
+                        lock.unlock();
+                    }
+                    System.out.println("fired");
+                } catch (InterruptedException e) {
+                    Thread.interrupted();
+                }
+            }
+            public void fire() {
+                lock.lock();
+                try {
+                    this.fire = true;
+                    condition.signal();
+                } finally {
+                    lock.unlock();
+                }
+            }
+            public static void main(String[] args) throws InterruptedException {
+                WaitThread waitThread = new WaitThread();
+                waitThread.start();
+                Thread.sleep(1000);
+                System.out.println("fire");
+                waitThread.fire();
+            }
+        }
+```
+
+### 并发容器
+
+
+
+
 
 ## 动态化
 
 ### 反射
+
+每一个类都有一个 Class 对象，这个对象包含了类的一些信息，这个类所有的实例都会持有这个 Class 对象的引用。
+
+1. 获取 Class 对象
+
+- 类名.class 
+- 实例.getClass()
+- Class.forName("xxx")
+
+```java
+package com.uiapp;
+
+public class Demo{
+
+};
+
+Class<Demo> d = Demo.class;
+
+Class<Demo> d2 = (new Demo()).getClass();
+
+Class<Demo> d3 = Class.fromName("com.uiapp.Demo");
+```
 
 ### 注解
 
