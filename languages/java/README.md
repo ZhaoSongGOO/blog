@@ -959,6 +959,45 @@ public class SafeCache<K, V> {
 
 ### 并发容器
 
+#### 写时复制 CopyOnWriteArrayList & CopyOnWriteArraySet
+
+遵循的思想写时复制策略，即写的时候，会创建一个新的底层数组，然后把旧的内容复制过来，随后使用新的数组替换原有数组。
+
+可以看出于效率比较低，主要用于一些读操作密集，涉及少量的写操作的场景。
+
+同时还需要注意的是，读线程迭代的过程访问的一直是旧的底层数组，如果我们更改数组后，读线程不会及时更新。
+
+#### 并发 ConcurrentHashMap
+
+为了提升效率，对于每个桶提供了独立的 synchronized 和原子操作来确保写操作的一致性，即分段锁。
+
+读不加锁，靠 volatile 来确保一致性，写需要获取锁。
+
+#### 无锁的 SkipListMap 和 SkipListSet
+
+ConcurrentSkipListMap是基于SkipList实现的，SkipList称为跳跃表或跳表，跳表更易于实现高效并发算法。没有使用锁，所有操作都是无阻塞的，所有操作都可以并行，包括写，多线程可以同时写。
+
+ConcurrentSkipListMap 为了实现并发安全、高效、无锁非阻塞，Concurrent-SkipListMap的实现非常复杂，大致结构如下
+
+<img src="languages/java/resources/3.png" style="width:80%">
+
+### 并发队列
+
+TODO
+
+## 异步任务执行服务
+
+Java 向我们提供的用于方便执行异步任务的一套框架叫异步任务执行服务。
+
+### 基本部件
+
+- Runnable 和 Callable， 表示要执行的异步任务
+    - Runnable 没有返回值，不会抛异常。
+    - Callable 有返回值，会抛异常。
+- Executor , EcecutorService 执行任务的对象
+- Future 异步任务的结果
+
+一般使用方法就是，构造自己的 Runnable 或者 Callable，随后使用 Executor 或者 EcecutorService 调度任务，拿到 Future，最后通过 Future 拿到执行结果(如有)。获取执行结果的时候，使用 `Future.get` 方法,这个方法会阻塞等待任务结果返回。
 
 
 
