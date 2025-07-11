@@ -1059,6 +1059,210 @@ public static void main(String[] args) {
 
 2. 创建注解
 
+创建一个注解的基本元素如下，下面声明了一个 Override 注解，主要包含三个关键点：
+
+- @interface 声明注解，后面跟的注解名称。
+- @Target 声明注解的目标，即你这个注解是给类、方法还是属性用的。
+- @Retention 表示注解保留到什么时候
+    - SOURCE 只在源代码保留，编译成字节码后就丢弃。
+    - CLASS 保留在字节码文件中，JVM 加载后不会保留在内存中。
+    - RUNTIME 一直保留到运行期。
+
+```java
+@Target(ElementType.METHOD)
+@Retention(RetentionPolicy.SOURCE)
+public @interface Override {
+}
+
+@Target({TYPE, FIELD, METHOD, PARAMETER, CONSTRUCTOR, LOCAL_VARIABLE})
+@Retention(RetentionPolicy.SOURCE)
+public @interface SuppressWarnings {
+    String[] value();
+}
+```
+
+你可以给注解定义一些参数，方法是在注解内部定义成员，合法的类型有基本类型、String、Class、枚举、注解，以及这些类型的数组。
+
+还可以使用 default 关键字指定默认值。
+
+```java
+@Target({ METHOD, CONSTRUCTOR, FIELD })
+@Retention(RUNTIME)
+@Documented
+public @interface Inject {
+    boolean optional() default false;
+}
+```
+
+需要注意的是，注解本身不能被继承，但是可以被使用类继承已使用的注解，如下:
+@Test 注解被 @Inherited 修饰，所以没有使用 @Test 注解的 Child 类继承使用了 @Test 注解的 Base 类后也具有了 @Test 注解。
+
+```java
+public class InheritDemo {
+    @Inherited
+    @Retention(RetentionPolicy.RUNTIME)
+    static @interface Test {
+    }
+    @Test
+    static class Base {
+    }
+    static class Child extends Base {
+    }
+    public static void main(String[] args) {
+        System.out.println(Child.class.isAnnotationPresent(Test.class));
+    }
+}
+```
+
+3. 查看注解
+
+对于所有的 Class、Field、Method、Constructor 对象都有下面的方法获取注解信息
+
+```java
+// Annotation 类型
+public interface Annotation {
+    boolean equals(Object obj);
+    int hashCode();
+    String toString();
+    //返回真正的注解类型
+    Class<? extends Annotation> annotationType();
+}
+
+
+//获取所有的注解
+public Annotation[] getAnnotations()
+//获取所有本元素上直接声明的注解，忽略inherited来的
+public Annotation[] getDeclaredAnnotations()
+//获取指定类型的注解，没有返回null
+public <A extends Annotation> A getAnnotation(Class<A> annotationClass)
+//判断是否有指定类型的注解
+public boolean isAnnotationPresent(
+    Class<? extends Annotation> annotationClass)
+
+// Method、Constructor 针对于函数参数特有的
+public Annotation[][] getParameterAnnotations()
+```
+
+4. 注解实战
+
+格式化输出：
+
+```java
+public class SimpleFormatter {
+    public static String format(Object obj) {
+        try {
+            Class<? > cls = obj.getClass();
+            StringBuilder sb = new StringBuilder();
+            for(Field f : cls.getDeclaredFields()) {
+                if(! f.isAccessible()) {
+                    f.setAccessible(true);
+                }
+                Label label = f.getAnnotation(Label.class);
+                String name = label != null ? label.value() : f.getName();
+                Object value = f.get(obj);
+                if(value != null && f.getType() == Date.class) {
+                    value = formatDate(f, value);
+                }
+                sb.append(name + ":" + value + "\n");
+            }
+            return sb.toString();
+        } catch (IllegalAccessException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static Object formatDate(Field f, Object value) {
+        Format format = f.getAnnotation(Format.class);
+        if(format != null) {
+            SimpleDateFormat sdf = new SimpleDateFormat(format.pattern());
+            sdf.setTimeZone(TimeZone.getTimeZone(format.timezone()));
+            return sdf.format(value);
+        }
+        return value;
+    }
+
+    @Retention(RUNTIME)
+    @Target(FIELD)
+    public @interface Label {
+        String value() default "";
+    }
+    @Retention(RUNTIME)
+    @Target(FIELD)
+    public @interface Format {
+        String pattern() default "yyyy-MM-dd HH:mm:ss";
+        String timezone() default "GMT+8";
+    }
+}
+
+static class Student {
+    @SimpleFormatter.Label("姓名")
+    String name;
+    @SimpleFormatter.Label("出生日期")
+    @SimpleFormatter.Format(pattern="yyyy/MM/dd")
+    Date born;
+    @SimpleFormatter.Label("分数")
+    double score;
+
+    public Student(String name, Date born, double score) {
+        this.name = name;
+        this.born = born;
+        this.score = score;
+    }
+}
+
+SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+Student zhangsan = new Student("张三", sdf.parse("1990-12-12"), 80.9d);
+System.out.println(SimpleFormatter.format(zhangsan));
+
+```
+
+
+依赖构建：
+
+```java
+public class SimpleContainer {
+    public static <T> T getInstance(Class<T> cls) {
+        try {
+            T obj = cls.newInstance();
+            Field[] fields = cls.getDeclaredFields();
+            for(Field f : fields) {
+                if(f.isAnnotationPresent(Inject.SimpleInject.class)) {
+                    if(! f.isAccessible()) {
+                        f.setAccessible(true);
+                    }
+                    Class<? > fieldCls = f.getType();
+                    f.set(obj, getInstance(fieldCls));
+                }
+            }
+            return obj;
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new RuntimeException(e);
+        }
+    }
+}
+
+public static class ServiceB {
+    public ServiceB(){}
+    public void action(){
+        System.out.println("I'm B");
+    }
+}
+
+public static class ServiceA {
+    public ServiceA(){}
+    @Inject.SimpleInject
+    ServiceB b;
+    public void callB(){
+        b.action();
+    }
+}
+
+ServiceA a = SimpleContainer.getInstance(ServiceA.class);
+a.callB();
+```
+
+
 
 
 ### 动态代理
