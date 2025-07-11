@@ -248,6 +248,8 @@ try {
 
 ## Measure 启动！
 
+> 如果需要更多了解，可以参考 [Measure深入分析](android/interview/view-mld/measure/)
+
 ### 布局整体流程图
 
 <img src="android/interview/view-mld/resources/mld_8.png" style="width:100%">
