@@ -1262,15 +1262,165 @@ ServiceA a = SimpleContainer.getInstance(ServiceA.class);
 a.callB();
 ```
 
-
-
-
 ### 动态代理
+
+我们在设计模式中学习的代理模式，需要我们按照被代理对象来实现我们代理的对外接口，需要实际编码，动态代理就是 java 提供给我们的一个框架，这个框架可以额外生成这些冗余代码。
+
+Proxy.newProxyInstance 方法接收的参数含义如下:
+
+- `IService.class.getClassLoader()`, 一个 classLoader。
+- `new Class<? >[] { IService.class } Proxy` 兼容的所有接口的类型，Proxy 会在内部实现这些接口的方法。
+- `new SimpleInvocationHandler(realService)` 代理 Handler，所有对这个 proxy 的调用，都会转掉 handler 的 invoke 方法。
+
+```java
+public class DynamicProxy {
+    static interface IService {
+        public void sayHello();
+    }
+    static class RealService implements IService {
+        @Override
+        public void sayHello() {
+            System.out.println("hello");
+        }
+    }
+    static class SimpleInvocationHandler implements InvocationHandler {
+        private final Object realObj;
+        public SimpleInvocationHandler(Object realObj) {
+            this.realObj = realObj;
+        }
+        @Override
+        public Object invoke(Object proxy, Method method,
+                                Object[] args) throws Throwable {
+            System.out.println(proxy instanceof Proxy);
+            System.out.println("entering " + method.getName());
+            Object result = method.invoke(realObj, args);
+            System.out.println("leaving " + method.getName());
+            return result;
+        }
+    }
+    public static void Run() {
+        IService realService = new RealService();
+        IService proxyService = (IService) Proxy.newProxyInstance(
+                IService.class.getClassLoader(), new Class<? >[] { IService.class },
+                new SimpleInvocationHandler(realService));
+        proxyService.sayHello();
+    }
+}
+
+```
+
 
 ### 类加载
 
+<img src="languages/java/resources/5.png" style="width:30%">
+
+这里再一次澄清一下 Class 对象和实例对象的关系。每个类被 JVM 加载后，都会在内存中生成一个唯一的 `Class` 对象，表示这个类的元数据（类名、方法、字段等）。这个 `Class` 对象由类加载器负责创建，并且在同一个类加载器下，同一个类只有一个 `Class` 对象。实例对象是你通过 `new` 关键字（或反射）创建出来的，代表类的一个具体实例。每个实例对象都“指向”它的 Class 对象（可以通过 `obj.getClass()` 获取）。一个 Class 对象可以创建无数个实例对象，但每个实例对象都只属于一个 Class 对象。
+
+#### 类加载的基本机制
+
+随后我们看一下更底层的类加载机制，首先，类加载是将查找 class 文件并解析加载到 jvm 中的过程。一般默认情况下，java 有三个类加载器，如下：
+
+1. 启动类加载器， Bootstrap ClassLoader，负责加载Java 核心类库，比如 `java.lang.*`、`java.util.*` 等（通常位于 JRE 的 `lib/rt.jar` 或 `modules` 目录中）。这是 JVM 自带的类加载器，用 C/C++ 实现，不是 Java 代码实现的，所以在 Java 代码中无法直接获取到它的实例。
+2. 扩展类加载器，Extension ClassLoader，负责加载 JRE 扩展目录（如 `jre/lib/ext` 或 `java.ext.dirs` 系统属性指定的目录）中的类库。
+3. 应用程序类加载器，Application ClassLoader，负责加载classpath下的类（即你自己写的 Java 代码、第三方 jar 包等）。
+
+<img src="languages/java/resources/4.png" style="width:80%">
+
+```java
+System.out.println(String.class.getClassLoader()); // null, 因为 Bootstrap 没有 java 实例
+System.out.println(Demo.class.getClassLoader());   // jdk.internal.loader.ClassLoaders$AppClassLoader@63c12fb0
+```
+
+然后就需要说一下加载顺序，java 类加载使用的是双亲委派模式，基本流程如下：
+
+1. 首先看是不是已经加载了，加载了直接返回。
+2. 没有加载的话，先委托给自己的父加载器进行加载。
+3. 如果父加载器加载成功，那就返回，否则自己再去尝试加载。
+
+这样做的目的是为了安全性，为了确保系统类不被篡改。例如我自己写了一个加载器，尝试加载一个自定义的 String，这样的话会让系统的 String 被替换掉。
+
+#### ClassLoader 使用
+
+ClassLoader 是一个抽象类，具体的实现有上面提到的扩展类加载器、应用程序加载器以及用户自定义的加载器。每一个 Class 对象都持有自己的加载器引用。
+
+每一个 class 对象都有一个方法获取自身的类加载器 `getClassLoader()`，每一个 ClassLoader 有一个加载类的方法 `loadClass`。
+
+```java
+ClassLoader cl = ClassLoader.getSystemClassLoader();
+try {
+    Class<? > cls = cl.loadClass("java.util.ArrayList");
+    ClassLoader actualLoader = cls.getClassLoader();
+    System.out.println(actualLoader);
+} catch (ClassNotFoundException e) {
+    e.printStackTrace();
+}
+```
+
+需要注意的是 Class 还有一个静态方法叫 forName, 也可以加载一个类，两者之间的区别在于 ClassLoader 的loadClass 不会执行类的初始化代码。
+
+#### 类加载的应用
+
+##### 可配置策略
+
+在一个项目中对于一个接口往往有数种实现，运行期我们要选取哪一个具体的实现呢？通常一个成熟的系统会提供一个可配置的加载策略。
+
+例如在项目的配置文件中配置
+
+```txt
+// config.txt
+lib="com.demo.liba"
+```
+
+而在系统中使用 classLoader 加载对应的类。
+
+```java
+public class ConfigurableStrategyDemo {
+    public static IService createService() {
+        try {
+            Properties prop = new Properties();
+            String fileName = "data/c87/config";
+            prop.load(new FileInputStream(fileName));
+            String className = prop.getProperty("lib");
+            Class<? > cls = Class.forName(className);
+            return (IService) cls.newInstance();
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+    public static void main(String[] args) {
+        IService service = createService();
+        service.action();
+    }
+}
+```
+
+##### 自定义 classLoader
 
 
+```java
+public class SimpleClassLoader extends ClassLoader{
+    @Override
+    protected Class<?> findClass(String s) throws ClassNotFoundException {
+        try {
+            byte[] bytes  = Files.readAllBytes(Paths.get(s));
+            return defineClass("Log", bytes, 0, bytes.length);
+        } catch (IOException ex) {
+            throw new ClassNotFoundException("failed to load class ", ex);
+        }
+    }
+}
 
+/*
+public class Log{
+    public void Print(){
+        System.out.println("Log info from custom log library!");
+    }
+}
+*/
 
-
+Class<?> clazz = (new SimpleClassLoader()).findClass("path of Log.class");
+System.out.println(clazz.getName());
+Object instance = clazz.getDeclaredConstructor().newInstance();
+Method m = clazz.getMethod("Print");
+m.invoke(instance);
+```
