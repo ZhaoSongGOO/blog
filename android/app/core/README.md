@@ -2,11 +2,11 @@
 
 ## Activity, DecorView, ViewRootImpl, Window 关系
 
-<img src="android/interview/core/resources/2.png" style="width:100%">
+<img src="android/app/core/resources/2.png" style="width:100%">
 
 我们首先列举出这几个对象之间的 UML 图，下面会通过几个阶段来解释这个 UML 的形成过程。
 
-<img src="android/interview/core/resources/3.png" style="width:70%">
+<img src="android/app/core/resources/3.png" style="width:70%">
 
 ### Attach 阶段
 
@@ -21,7 +21,7 @@
 
 换句话说，你写的 activity.xml 只是 activity 视图树的一部分。
 
-<img src="android/interview/core/resources/1.png" style="width:20%">
+<img src="android/app/core/resources/1.png" style="width:20%">
 
 经过这一阶段，`PhoneWindow` 创建并持有了 `DecorView`, 同时 `DecorView` 通过 setWindow 接口持有了 `PhoneWindow`。
 
@@ -59,7 +59,7 @@ Activity 是 Android 应用中的一个组件（Component），用于承载和�
 
 ### Activity 类结构
 
-<img src="android/interview/core/resources/4.png" style="width:20%">
+<img src="android/app/core/resources/4.png" style="width:20%">
 
 Activity 继承自 Context，同时实现了一系列的接口。
 
@@ -67,7 +67,7 @@ Activity 中持有了对 PhoneWindow、Application、ActivityThread、Instrument
 
 ### Activity 创建流程
 
-<img src="android/interview/core/resources/5.png" style="width:100%">
+<img src="android/app/core/resources/5.png" style="width:100%">
 
 我们下面以一个应用完全启动的流程为例来讲解 Activity 创建的流程。
 
@@ -91,7 +91,7 @@ Activity 中持有了对 PhoneWindow、Application、ActivityThread、Instrument
 1. ApplicationThread 是 ActivityThread 的内部类，其实现了 binder 接口，用于和 ATMS 进行通信。
 2. ApplicationThread 收到 ATMS 的消息后，会使用 sendMessage 触发 ActivityThread 对应的方法。
 
-<img src="android/interview/core/resources/6.png" style="width:30%">
+<img src="android/app/core/resources/6.png" style="width:30%">
 
 
 ## 深入理解 Window
@@ -100,7 +100,7 @@ Activity 中持有了对 PhoneWindow、Application、ActivityThread、Instrument
 
 这里的 Service 是 Android 系统四大组件之一的 Service，和上面提到的 ATMS 有本质的区别，具体差别如下：
 
-<img src="android/interview/core/resources/7.png" style="width:60%">
+<img src="android/app/core/resources/7.png" style="width:60%">
 
 ### Service 启动停止流程分析
 
@@ -135,7 +135,7 @@ Activity 中持有了对 PhoneWindow、Application、ActivityThread、Instrument
 
 ### 注册接收者与解注册接收者
 
-<img src="android/interview/core/resources/9.png" style="width:100%">
+<img src="android/app/core/resources/9.png" style="width:100%">
 
 1. 当我们用户在 register 一个广播 receiver 的时候，首先会创建一个 ReceiverDispatcher 对象，这个对象内部持有了 receiver，同时内部实现了一个 binder 接口对象 IIntentReceiver 对象。
 2. 随后通过 binder 调用 AMS 的register 方法，AMS register 的时候将 receiver 信息和 IIntentReceiver.proxy 对象进行存储。
@@ -157,7 +157,7 @@ getContentResolver().delete(uri, "name = ?", arrayOf("NewBee"))
 
 整体的过程如下所示。
 
-<img src="android/interview/core/resources/8.png" style="width:100%">
+<img src="android/app/core/resources/8.png" style="width:100%">
 
 1. Context 内部的 ContentResolver 的具体实现是 ApplicationContentResolver，其内部 delete 的时候，会调用 binder 到 AMS 获取对应的 ContentProvider。
 2. AMS 返回 ContentProvider 的客户端代理 IContentProvider。

@@ -107,4 +107,4 @@ public final void measure(int widthMeasureSpec, int heightMeasureSpec) {
 
 ## onMeasure
 
-### [TextView](android/interview/view-mld/measure/textview-measure.md)
+### [TextView](android/app/view-mld/measure/textview-measure.md)

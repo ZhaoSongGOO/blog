@@ -5,7 +5,7 @@
 
 ## View 类继承体系
 
-<img src="android/interview/view-mld/resources/mld_1.png" style="width:50%">
+<img src="android/app/view-mld/resources/mld_1.png" style="width:50%">
 
 
 
@@ -15,7 +15,7 @@
 
 ## 渲染流程
 
-<img src="android/interview/view-mld/resources/mld_2.png" style="width:70%">
+<img src="android/app/view-mld/resources/mld_2.png" style="width:70%">
 
 先从整体来看，一次 `View` 树到手机上实际的 UI 视图在应用层经历大致的一个流程是：
 
@@ -34,7 +34,7 @@
 
 ### 应用层触发
 
-<img src="android/interview/view-mld/resources/mld_3.png" style="width:100%">
+<img src="android/app/view-mld/resources/mld_3.png" style="width:100%">
 
 在应用层，用来承接 `VSync` 信号的对象叫 `Choreographer`。其收到这个信号后，触发自己的 `doFrame` 函数，这个函数会对注册的一些 `callback` 进行回调。其中就有来自于 `ViewRootImpl` 注册的 `doTraversal` 方法。 `doTraversal` 中会按序执行 `measure`、`layout`、`draw`。
 
@@ -107,7 +107,7 @@ ui.width = 200dp;
 
 `DecorView` 是整个 `Activity` 视图树的根容器，从上面的类继承层次也可以看到，它是一个 `FrameLayout` 的子类。下面展示了相关的几个类的关系。
 
-<img src="android/interview/view-mld/resources/mld_5.png" style="width:100%">
+<img src="android/app/view-mld/resources/mld_5.png" style="width:100%">
 
 1. 创建
 
@@ -208,7 +208,7 @@ try {
 
 ### 手机屏幕的组成
 
-<img src="android/interview/view-mld/resources/mld_4.png" style="width:20%"><img src="android/interview/view-mld/resources/mld_6.png" style="width:60%">
+<img src="android/app/view-mld/resources/mld_4.png" style="width:20%"><img src="android/app/view-mld/resources/mld_6.png" style="width:60%">
 
 上文提到，我们一个 `Activity` 的 UI 树根节点是 `DecorView`，其本质是一个 `FrameLayout`，其内部直接持有一个 `LinearLayout` 布局，这个布局中，从上到下添加了 `StatusBar` 、`TiTleBar`、`Content`(FrameLayout)、`NavigationBar` 等组件。
 
@@ -243,16 +243,16 @@ try {
 
 在此假设下，我们的 UI 树变成如下的样子：
 
-<img src="android/interview/view-mld/resources/mld_7.png" style="width:25%">
+<img src="android/app/view-mld/resources/mld_7.png" style="width:25%">
 
 
 ## Measure 启动！
 
-> 如果需要更多了解，可以参考 [Measure深入分析](android/interview/view-mld/measure/)
+> 如果需要更多了解，可以参考 [Measure深入分析](android/app/view-mld/measure/)
 
 ### 布局整体流程图
 
-<img src="android/interview/view-mld/resources/mld_8.png" style="width:100%">
+<img src="android/app/view-mld/resources/mld_8.png" style="width:100%">
 
 Android 的所有 UI 组成了一个树结构，并在每个 VSync 到来的时候，如果有需要就以广度优先遍历的方式对整个 UI 树进行测算。在每一个测算的过程(函数)中，每一种不同的容器组件或者具体的视图组件都会做不同的测算处理，这里面涉及了非常多的细节和边界情况，为了避免陷入困惑，我们暂时不去考虑这些特殊的逻辑，从关键流程和关键输入输出来描述整个过程。
 
@@ -284,7 +284,7 @@ final void measure(int widthMeasureSpec, int heightMeasureSpec) {
 
 子 View 对于尺寸的的调整不是我们想调整多少就调整多少的，如果没有按照限制去做调整，会降级到直接使用父容器的约束尺寸。
 
-<img src="android/interview/view-mld/resources/mld_9.png" style="width:40%">
+<img src="android/app/view-mld/resources/mld_9.png" style="width:40%">
 
 2. 调用 `setMeasuredDimension` 设置自己计算的结果，如果不设置，会直接抛出异常。
 
@@ -534,7 +534,7 @@ public void layout(int l, int t, int r, int b) {
 
 `layout` 方法接收四个参数，如下图所示，分别代表子视图在父容器坐标系中的上右下左四个距离。
 
-<img src="android/interview/view-mld/resources/mld_10.png" style="width:20%">
+<img src="android/app/view-mld/resources/mld_10.png" style="width:20%">
 
 随后 `layout` 会使用 setXXXFrame 函数来设置自己的位置，随后调用 onLayout。在调用 onLayout 的时候，会额外传入一个 changed 的参数，这个参数来自于 setXXXFrame 的返回，代表当前视图的位置有没有变更，可以更具需要，选择是否需要执行 onLayout 的实际定位逻辑。
 
@@ -562,7 +562,7 @@ protected void onLayout(boolean changed, int left, int top, int right, int botto
 
 ### layout 流程分析
 
-<img src="android/interview/view-mld/resources/mld_11.png" style="width:100%">
+<img src="android/app/view-mld/resources/mld_11.png" style="width:100%">
 
 1. 和 `performMeasure` 一样，`performLayout` 在其之后被触发。
 2. 调用 `DecorView` 的 `layout` 方法，传入的参数为 `(0, 0, mDecorView.getMeasuredWidth, mDecorView.getMeasuredHeight)`
@@ -573,11 +573,11 @@ protected void onLayout(boolean changed, int left, int top, int right, int botto
 
 ## Draw 启动！
 
-<img src="android/interview/view-mld/resources/mld_12.png" style="width:100%">
+<img src="android/app/view-mld/resources/mld_12.png" style="width:100%">
 
 ### 关键的概念
 
-<img src="android/interview/view-mld/resources/mld_15.png" style="width:30%">
+<img src="android/app/view-mld/resources/mld_15.png" style="width:30%">
 
 1. Canvas
 
@@ -625,7 +625,7 @@ Android 暴露给应用的一个绘图对象，这个对象在硬件绘制和软
 
 下面展示了一个视图树，其中红色的视图是产生 UI 变化的视图，即需要重绘的视图。
 
-<img src="android/interview/view-mld/resources/mld_16.png" style="width:30%">
+<img src="android/app/view-mld/resources/mld_16.png" style="width:30%">
 
 1. 硬件绘制策略
 - 首先，在视图 UI 属性发生变化时，会向上将其所有的祖先节点标记为 dirty。
@@ -634,7 +634,7 @@ Android 暴露给应用的一个绘图对象，这个对象在硬件绘制和软
 
 按照这个描述，在一次硬件绘制过程中，基本只会遍历标记为 dirty 的节点，没有标记为 dirty 的节点在第一次遍历就会及时返回，不会继续遍历非 dirty 视图的子视图。
 
-<img src="android/interview/view-mld/resources/mld_17.png" style="width:30%">
+<img src="android/app/view-mld/resources/mld_17.png" style="width:30%">
 
 2. 软件绘制策略
 - 首先在视图属性发生变化时，会将变化视图所在的矩形区域上报到 ViewRootImpl, 记录为脏区，在一次 VSync 周期内，多次上报会被合并。所以最后脏区是一个或多个矩形区域。
@@ -647,13 +647,13 @@ Android 暴露给应用的一个绘图对象，这个对象在硬件绘制和软
 
 是不行的，因为 Andoroid 里面子视图可以超出父节点的区域而存在。就算父节点和脏区没有交集，但是子节点可能恰好在脏区内部。
 
-<img src="android/interview/view-mld/resources/mld_18.png" style="width:40%">
+<img src="android/app/view-mld/resources/mld_18.png" style="width:40%">
 
 
 
 #### 视图树与绘制指令分离
 
-<img src="android/interview/view-mld/resources/mld_19.png" style="width:30%">
+<img src="android/app/view-mld/resources/mld_19.png" style="width:30%">
 
 前面提到的 displayList，在 AF 中是以 RenderNode 的形式进行存储。每一个视图都对应一个 RenderNode，这个 RenderNode 作为容器存储着这个视图所有的绘制指令 displayList。
 

@@ -14,7 +14,7 @@ Activity（活动） 是 Android 四大组件之一，代表一个用户交互�
 
 #### 生命周期
 
-<img src="android/interview/basic/resources/a_1.png" style="width:70%">
+<img src="android/app/basic/resources/a_1.png" style="width:70%">
 
 ##### 系统部分
 
@@ -48,7 +48,7 @@ Activity（活动） 是 Android 四大组件之一，代表一个用户交互�
 
 ##### singleInstance
 
-<img src="android/interview/basic/resources/a_2.png" style="width:50%">
+<img src="android/app/basic/resources/a_2.png" style="width:50%">
 
 `activity` 会独占一个全新的任务栈（Task），且该栈中只能存在该 `activity` 的实例。这是一个全局单例。
 
@@ -147,7 +147,7 @@ if (activity != null) {
 
 ##### Fragment 生命周期
 
-<img src="android/interview/basic/resources/a_3.png" style="width:90%">
+<img src="android/app/basic/resources/a_3.png" style="width:90%">
 
 ###### 状态
 1. 运行
@@ -578,7 +578,7 @@ fun main() {
 - 通过 `Handler` 发送消息。这个消息会发送到对应的 `Looper` 中。
 - 收到消息的 `Looper` 会在自己所在的线程中调用 `callback`。
 
-<img src="android/interview/basic/resources/a_4.png" style="width:30%">
+<img src="android/app/basic/resources/a_4.png" style="width:30%">
 
 2. sendMessage
 
@@ -701,7 +701,7 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
 
 #### 广播类型
 
-<img src="android/interview/basic/resources/a_5.png" style="width:30%">
+<img src="android/app/basic/resources/a_5.png" style="width:30%">
 
 ##### 显式广播
 
@@ -754,7 +754,7 @@ ContentProvider主要用于在不同的应用程序之间实现数据共享的�
 
 2. 代码中进行运行期动态获取, 依据获取结果执行对应的风险代码
 
-<img src="android/interview/basic/resources/a_6.png" style="width:20%">
+<img src="android/app/basic/resources/a_6.png" style="width:20%">
 
 ```kotlin
 class CallPhoneActivity : AppCompatActivity() {
@@ -1066,13 +1066,13 @@ findViewById<Button>(R.id.change).setOnClickListener {
 
 线性布局中，所有的 UI 按照水平或者垂直的方向按序排列。
 
-<img src="android/interview/basic/resources/a_8.png" style="width:20%">
+<img src="android/app/basic/resources/a_8.png" style="width:20%">
 
 #### 相对布局
 
 相对布局默认会将所有的子视图堆叠在左上方展示，你可以使用一系列的操作来调整子视图之间以及子视图与父视图之间的位置关系。
 
-<img src="android/interview/basic/resources/a_9.png" style="width:10%">
+<img src="android/app/basic/resources/a_9.png" style="width:10%">
 
 #### 帧布局
 
@@ -1082,7 +1082,7 @@ findViewById<Button>(R.id.change).setOnClickListener {
 
 GridLayout 是 Android 中的一种布局管理器，用于在网格形式的布局中排列子视图。通过 GridLayout，可以将子视图按行和列的方式排列在屏幕上，类似于表格布局。每个子视图可以占据一个或多个网格单元格，从而实现灵活的布局。
 
-<img src="android/interview/basic/resources/a_10.png" style="width:50%">
+<img src="android/app/basic/resources/a_10.png" style="width:50%">
 
 ```xml
         <GridLayout
@@ -1139,7 +1139,7 @@ GridLayout 是 Android 中的一种布局管理器，用于在网格形式的布
 
 #### 约束布局
 
-<img src="android/interview/basic/resources/a_11.png" style="width:50%">
+<img src="android/app/basic/resources/a_11.png" style="width:50%">
 
 它允许开发者通过设置视图之间的约束关系来定义视图的位置和大小，从而实现灵活性和性能的最佳平衡。
 
@@ -1149,7 +1149,7 @@ GridLayout 是 Android 中的一种布局管理器，用于在网格形式的布
 
 ### View 的 Measure 、Layout 、Draw 流程分析
 
-[流程分析](android/interview/view-mld/)
+[流程分析](android/app/view-mld/)
 
 ### 继承 View
 
@@ -1404,7 +1404,7 @@ fun setStrokeWidth(width: Float) {
 2. 如果用户手动的调用了 invalidate 标记视图为 dirty，那就会触发。
 3. 如果视图只是绘制状态变化，例如背景色变化，而此时没有尺寸变化，或者 dirty，是不会重绘的。
 
-<img src="android/interview/basic/resources/a_12.png" style="width:30%">
+<img src="android/app/basic/resources/a_12.png" style="width:30%">
 
 ##### 会存在双重绘制吗？
 
@@ -1452,7 +1452,7 @@ if(area_changed || invalidate){
 
 下面实现了一个布局，这个布局中，上方是一个图片，中部是图片介绍，下方有个按钮，点击按钮可以关闭/显示图片介绍。其中图片和按钮都需要居中。
 
-<img src="android/interview/basic/resources/a_13.png" style="width:30%">
+<img src="android/app/basic/resources/a_13.png" style="width:30%">
 
 - 重写 onMeasure
 - 重写 onLayout
@@ -1961,11 +1961,11 @@ class CircleButton
 - 我们可以指定布局半径
 - 我们可以指定布局跨越的角度范围
 
-<img src="android/interview/basic/resources/a_14.png" style="width:10%">
+<img src="android/app/basic/resources/a_14.png" style="width:10%">
 
 我们先介绍一下 APP 坐标系，由左向右为 X 轴正向，由上到下为 Y 轴正向。
 
-<img src="android/interview/basic/resources/a_15.png" style="width:20%">
+<img src="android/app/basic/resources/a_15.png" style="width:20%">
 
 具体代码如下，关键点见注释。
 
@@ -2098,7 +2098,7 @@ Android 操作系统内置了 SQLite 数据库。并提供了对应的接口 `SQ
 
 我们可以将这个 db 文件导出来，利用 `database navigator` 等工具进行查看。
 
-<img src="android/interview/basic/resources/a_7.png" style="width:50%">
+<img src="android/app/basic/resources/a_7.png" style="width:50%">
 
 #### 数据库创建与更新
 
@@ -2629,7 +2629,7 @@ class MyViewModel : ViewModel() {
 
 ## MVC、MVP、MVVM
 
-[MVC、MVP、MVVM](android/interview/mvc/)
+[MVC、MVP、MVVM](android/app/mvc/)
 
 --- 
 

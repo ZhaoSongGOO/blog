@@ -209,7 +209,7 @@ class ViewFlipperActivity : Activity() {
 
 相比于 ListView，RecyclerView 具有如下的优势：
 
-<img src="android/interview/ui/scroll/resources/1.png" style="width:80%">
+<img src="android/app/ui/scroll/resources/1.png" style="width:80%">
 
 ### 使用
 

@@ -146,7 +146,7 @@ lint.jar: 库提供的自定义 Lint 规则，在项目执行 Lint 检查时使�
 
 ### implementation
 
-<img src="android/interview/build/apk/resources/b_1.png" style="width:10%">
+<img src="android/app/build/apk/resources/b_1.png" style="width:10%">
 
 1. 行为
 - 依赖项会编译到当前模块中。
@@ -162,7 +162,7 @@ lint.jar: 库提供的自定义 Lint 规则，在项目执行 Lint 检查时使�
 
 ### api
 
-<img src="android/interview/build/apk/resources/b_2.png" style="width:30%">
+<img src="android/app/build/apk/resources/b_2.png" style="width:30%">
 
 1. 行为
 - 依赖项会编译到当前模块中
@@ -429,7 +429,7 @@ apksigner verify -v --print-certs app.apk
 
 4. 重打包技术流程
 
-<img src="android/interview/build/apk/resources/b_5.png" style="width:100%">
+<img src="android/app/build/apk/resources/b_5.png" style="width:100%">
 
 - 解包
 你可以使用 `apktool` 工具进行解压，也可以像加压压缩包一样使用 unzip 进行解压，区别在于 `apktool` 可以反编译 `AndroidManifest.xml` 文件。
@@ -495,11 +495,11 @@ zipalign -v 4 modified.apk aligned.apk
 
 对于 free 版本的，首页显式 “请升级成测试版本” 字样。
 
-<img src="android/interview/build/apk/resources/b_3.png" style="width:10%">
+<img src="android/app/build/apk/resources/b_3.png" style="width:10%">
 
 对于 paid 版本，首页展示正常的 UI。
 
-<img src="android/interview/build/apk/resources/b_4.png" style="width:10%">
+<img src="android/app/build/apk/resources/b_4.png" style="width:10%">
 
 
 1. 创建 paid 和 free 的workspace

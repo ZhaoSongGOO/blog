@@ -34,7 +34,7 @@
 
 通过上面的持有关系，Native 层在收到来自于内核的事件后，会通过在对应的 服务端 fd 上发送消息，从而触发 `epoll` 监听。`epoll` 回调就会把这个监听的信息发送到 `ViewRootImpl`.
 
-<img src="android/interview/event/resources/1.png" style="width:80%">
+<img src="android/app/event/resources/1.png" style="width:80%">
 
 
 #### Native 如何知道将事件发送给哪个 `InputChannel[0]`
@@ -52,7 +52,7 @@
 在上面我们讲了事件发生的大概流程，以及应用层 ViewRootImpl 作为应用层事件接收对象的事实，本节从 ViewRootImpl 收到事件后为起点，介绍其在应用层消费的过程。
 
 
-<img src="android/interview/event/resources/2.png" style="width:120%">
+<img src="android/app/event/resources/2.png" style="width:120%">
 
 
 ### 接收
@@ -299,7 +299,7 @@ public boolean dispatchTouchEvent(MotionEvent ev) {
 }
 ```
 
-<img src="android/interview/event/resources/3.png" style="width:50%">
+<img src="android/app/event/resources/3.png" style="width:50%">
 
 
 如果 disallowIntercept 为 false，那是否拦截的决定权就交给了 onInterceptTouchEvent。下面我们看一下 onInterceptTouchEvent 的几个标准实现。
