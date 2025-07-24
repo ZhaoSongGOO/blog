@@ -3,6 +3,28 @@
 > 本文总阅读量 <span id="busuanzi_value_page_pv"><i class="fa fa-spinner fa-spin"></i></span>次
 ---
 
+## 远古时代
+
+我们先看下在没有这些概念之前，我们是如何做这种数据、逻辑、视图操作混合项目的，举一个下面的例子，可以看到我们控制逻辑，数据处理以及 UI 操作就是堆起在一起的，这样如果后面某个地方发生变化，例如改变了视图风格或者结构那我们就得到处去修改。按照高内聚的思路，就顺顺当当的提出了 MVC 模式。
+
+```js
+<input id="num1">
+<input id="num2">
+<button onclick="add()">Add</button>
+<div id="result"></div>
+<script>
+function add() {
+    // 读取输入
+    var n1 = parseInt(document.getElementById('num1').value);
+    var n2 = parseInt(document.getElementById('num2').value);
+    // 业务逻辑
+    var sum = n1 + n2;
+    // 显示结果
+    document.getElementById('result').innerText = sum;
+}
+</script>
+```
+
 ## MVC
 
 MVC 全称是 Model-View-Controller，即“模型-视图-控制器”模式。它是一种分层架构模式，目的是将应用程序的业务逻辑、数据、界面显示和用户输入分离开来，从而提高代码的可维护性、可扩展性和可重用性。
@@ -27,37 +49,41 @@ MVC 全称是 Model-View-Controller，即“模型-视图-控制器”模式。�
 - 内容：事件监听、输入处理、调用 Model 更新数据、通知 View 更新界面等。
 - 特点：协调 Model 和 View 的交互。
 
-### 流程
+### 问题
 
-1. 用户在 View 上进行操作（如点击按钮、输入文本）。
-2. View 将用户的操作事件（如点击、输入）传递给 Controller。
-3. Controller 根据用户操作，调用 Model 进行数据处理或业务逻辑运算（如保存数据、查询数据）。
-4. Model 完成数据的增删改查或业务处理。
-5. Model 的数据发生变化后，通常会通知 Controller 或 View（不同实现方式略有差异）。
-6. View 再根据 Model 的新数据刷新界面。
+MVC 在理论上很好地分离了 Model、View 和 Controller，但在实际开发中，尤其是 Android 这类平台，Activity/Fragment 不可避免地承担了 View 和 Controller 的双重职责，导致代码臃肿、耦合严重、难以维护。为了解决这些现实问题，业界从两个方向演进：一是通过工程架构（如 MVP）进一步分离和解耦 View 与业务逻辑；二是通过底层能力（如数据绑定、响应式流）发展出 MVVM，让 View 和 Model 的同步自动化，进一步提升开发效率和代码质量。
 
-### 案例
-
-就以 Android 开发为例，Activity 同时负担了 View 和 Controller，Model 则是我们自己实现的数据获取模块。
-
-Activity 中间接持有了对应的视图容器 DecorView，同时作为控制器，响应 View 的事件，在响应的过程中通过 Model 进行数据更新逻辑，例如 Model 可能从数据库读取数据，然后读取出来的数据在调用到 Controller。Controller 对数据进行解析，重新设置到视图中。
-
-## MVP
-
-MVP的目标：彻底消除View与Model的关联，强制所有逻辑集中于Presenter。
-
-上面 MVC 的案例中可以看出 Activity 兼具 View 的 Controller 的职责，本身没有问题，但是我们在 Activity 中通常会有下面的代码。因为我们很容易拿到 View，所以也就自然而然的直接让 View 与 mode 进行了通信。
-
-```kotlin
-findViewById<View>(R.id.target).setOnClickListener {
-  mode.fetch()
+```java
+class LoginActivity : AppCompatActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        // ...省略
+        btnLogin.setOnClickListener {
+            val username = etUsername.text.toString()
+            val password = etPassword.text.toString()
+            val success = UserRepository.login(username, password)
+            if (success) {
+                showToast("登录成功")
+            } else {
+                showToast("失败")
+            }
+        }
+    }
 }
 ```
 
-其实要真细分，这个事件的 lambda 也属于 Controller 的逻辑，View 到也没和 Mode 直接通信。总之就是 View 持有了 Model Model 又是后也会持有 View，从而导致两者互相通信。
+
+## MVP
+
+MVP的目标： 将视图和控制逻辑之间的耦合通过依赖倒置原则做拆分。
+
+上面 MVC 的案例中可以看出 Activity 兼具 View 的 Controller 的职责，本身没有问题，但是我们在 Activity 中通常会有下面的代码。因为我们很容易拿到 View，所以也就自然而然的直接让 View 与 mode 进行了通信。既然 Activity 在设计上就是 View 的职责，那我们的思路就是把 Controller 的职责拆分出去变成 Presenter。
 
 
-所以为了更好的区分职责，将 Activity 中的 Controller 相关逻辑拆出来成一个 Presenter。 Presenter 其中持有了 Activity 和 Model，以后 Activity 就专注于 View 的工作，至于如何和 Model 通信都交由 Presenter 负责。
+<img src="android/app/mvc/resources/mvp.png" style="width:100%">
+
+上图可以看出来，在 MVC 的理念下，因为 Activity 的特殊性，往往 V 和 C 耦合在了一起，导致整个 Activity 非常臃肿，最终变成了 VM 或者 CM 模式。
+
+所以为了更好的区分职责，将 Activity 中的 Controller 相关逻辑拆出来成一个 Presenter。 Presenter 其中以 View 操作接口的形式持有了 Activity，以后 Activity 就专注于 View 的工作，至于如何和 Model 通信都交由 Presenter 负责。
 
 
 下面有一个简单的例子。
@@ -126,9 +152,7 @@ class LoginActivity : AppCompatActivity(), LoginView {
 
 ## MVVM
 
-MVP 在 Presenter 中编写的业务逻辑和 UI 更新逻辑大量混合在一块。为了降低这种更新逻辑的重复编写，借助于底层的数据绑定能力，便提出了 MVVM 模式，即 Model-View-ViewModel 模式。
-
-这种模式下，Model 和 View 与上面提到的一样，但是 ViewModel 不会直接持有 View，而是通过暴露一个状态数据，View 通过对这个数据注册观察者，就可以获取到数据的改动。
+MVP 是在架构上的优化以让工程逼近 MVC 目标，而 MVVM 是以框架底层能力扩展，尤其是数据绑定（DataBinding）、响应式编程（如 LiveData、RxJava）等底层能力的成熟，MVVM 让 View 和 Model 之间的同步变得自动化，进一步降低了 View 层的复杂度，提升了开发效率。
 
 一般流程如下：
 
