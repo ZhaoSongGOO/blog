@@ -13,3 +13,7 @@
 ## [UI](android/app/ui/)
 
 ## [Event](android/app/event/)
+
+## [Security](android/app/security/)
+
+## [Performance](android/app/performance/)
