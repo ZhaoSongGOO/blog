@@ -283,3 +283,85 @@ rb_node_desc 和 rb_node_node 这两个都是红黑树节点，每一个与binde
 
 最后，death 存放的是死亡监听结构体，用于 server 死亡后发送死亡监听时提供输入信息。
 
+### binder_buffer
+
+binder_buffer 用来描述一个内核缓冲区，这个缓冲区用来进行进程间通信数据传输。每一个使用 binder rpc 的进程在内核中都有一个缓冲区队列，每一个 binder 通信的缓冲区就取自于这个队列中的一个节点，节点就是 entry。
+
+同时为了更高效的管理，每个进程维护了两棵红黑树，一棵树维护的是在使用中的 buffer，一颗维护着空闲的buffer，free 的值代表当前是不是空闲。
+
+成员变量transaction和target_node用来描述一个内核缓冲区正在交给哪一个事务以及哪一个Binder实体对象使用。
+
+sync_transaction 表明当前事务是不是异步事务，Binder驱动程序限制了分配给异步事务的内核缓冲区的大小，这样做的目的是为了保证同步事务可以优先得到内核缓冲区，以便可以快速地对该同步事务进行处理。
+
+```c
+struct binder_buffer {
+	struct list_head entry; /* free and allocated entries by addesss */
+	struct rb_node rb_node; /* free entry by size or allocated entry */
+				/* by address */
+	unsigned free : 1;
+	unsigned allow_user_free : 1; // server 在处理完成事务后，是否可以决定释放缓冲区。
+	unsigned async_transaction : 1; // 如果当前事务是一个异步事务，这个位置会设置成 1
+	unsigned debug_id : 29;
+
+	struct binder_transaction *transaction;
+
+	struct binder_node *target_node;
+	size_t data_size;
+	size_t offsets_size;
+	uint8_t data[0];
+};
+```
+
+成员变量data指向一块大小可变的数据缓冲区，它是真正用来保存通信数据的。数据缓冲区保存的数据划分为两种类型，其中一种是普通数据，另一种是Binder对象。
+
+Binder驱动程序不关心数据缓冲区中的普通数据，但是必须要知道里面的Binder对象，因为它需要根据它们来维护内核中的Binder实体对象和Binder引用对象的生命周期。
+
+例如，如果数据缓冲区中包含了一个Binder引用，并且该数据缓冲区是传递给另外一个进程的，那么Binder驱动程序就需要为另外一个进程创建一个Binder引用对象，并且增加相应的Binder实体对象的引用计数，因为它也被另外的这个进程引用了。
+
+由于数据缓冲区中的普通数据和Binder对象是混合在一起保存的，它们之间并没有固定的顺序，因此，Binder驱动程序就需要额外的数据来找到里面的Binder对象。在数据缓冲区的后面，有一个偏移数组，它记录了数据缓冲区中每一个Binder对象在数据缓冲区中的位置。偏移数组的大小保存在成员变量offsets_size中，而数据缓冲区的大小保存在成员变量data_size中。
+
+
+### binder_proc
+
+结构体binder_proc用来描述一个正在使用Binder进程间通信机制的进程。当一个进程调用函数open来打开设备文件/dev/binder时，Binder驱动程序就会为它创建一个binder_proc结构体，并且将它保存在一个全局的hash列表中，而成员变量proc_node就正好是该hash列表中的一个节点。
+
+此外，成员变量pid、tsk和files分别指向了进程的进程组ID、任务控制块和打开文件结构体数组。
+
+
+
+```c
+struct binder_proc {
+	struct hlist_node proc_node;
+	struct rb_root threads;
+	struct rb_root nodes;
+	struct rb_root refs_by_desc;
+	struct rb_root refs_by_node;
+	int pid;
+	struct vm_area_struct *vma;
+	struct task_struct *tsk;
+	struct files_struct *files;
+	struct hlist_node deferred_work_node;
+	int deferred_work;
+	void *buffer;
+	ptrdiff_t user_buffer_offset;
+
+	struct list_head buffers;
+	struct rb_root free_buffers;
+	struct rb_root allocated_buffers;
+	size_t free_async_space;
+
+	struct page **pages;
+	size_t buffer_size;
+	uint32_t buffer_free;
+	struct list_head todo;
+	wait_queue_head_t wait;
+	struct binder_stats stats;
+	struct list_head delivered_death;
+	int max_threads;
+	int requested_threads;
+	int requested_threads_started;
+	int ready_threads;
+	long default_priority;
+};
+```
+
