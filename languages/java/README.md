@@ -1262,6 +1262,83 @@ ServiceA a = SimpleContainer.getInstance(ServiceA.class);
 a.callB();
 ```
 
+### 代码生成
+
+代码生成是注解的一个使用场景，Java 编译期间可以指定注解处理器，并会把被特定注解修饰的属性发送到 注解处理器 进行编译期间处理，我们就可以使用这个特性在编译期生成代码、
+
+1. 编写注解以及注解处理器
+
+```java
+// AutoHello.java
+package annotation;
+
+@Target(ElementType.TYPE)
+@Retention(RetentionPolicy.SOURCE)
+public @interface AutoHello {
+    String value() default "World";
+}
+
+
+// AutoHelloProcessor.java
+package annotation;
+
+@SupportedAnnotationTypes("annotation.AutoHello")
+@SupportedSourceVersion(SourceVersion.RELEASE_8)
+public class AutoHelloProcessor extends AbstractProcessor {
+    @Override
+    public boolean process(Set<? extends TypeElement> annotations, RoundEnvironment roundEnv) {
+        for (Element element : roundEnv.getElementsAnnotatedWith(AutoHello.class)) {
+            String className = "DemoHello";
+            AutoHello anno = element.getAnnotation(AutoHello.class);
+            String msg = anno.value();
+
+            String code = "public class " + className + " {\n"
+                        + "    public static void sayHello() {\n"
+                        + "        System.out.println(\"Hello, fuck" + msg + "!\");\n"
+                        + "    }\n"
+                        + "}\n";
+            try {
+                JavaFileObject file = processingEnv.getFiler().createSourceFile(className, element);
+                try (Writer writer = file.openWriter()) {
+                    writer.write(code);
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+        return true;
+    }
+}
+
+// Demo.java
+
+import annotation.AutoHello;
+
+@AutoHello("Java")
+public class Demo {
+    public static void main(String[] args) {
+        DemoHello.sayHello();
+    }
+}
+```
+
+一般编译流程 
+
+1. 编译注解库
+
+```bash
+javac annotation/*.java
+```
+
+2. 编译主工程代码，并注明注解处理器
+
+这个操作后，会在 Demo.java 所在目录下生成 DemoHello.java 文件。
+
+```bash
+javac -cp . Demo.java -processor annotation.AutoHelloProcessor
+```
+
+
 ### 动态代理
 
 我们在设计模式中学习的代理模式，需要我们按照被代理对象来实现我们代理的对外接口，需要实际编码，动态代理就是 java 提供给我们的一个框架，这个框架可以额外生成这些冗余代码。
