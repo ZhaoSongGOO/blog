@@ -433,3 +433,61 @@ enum {
 
 一个 binder 线程在处理一个事务时，如果出现了异常情况，那么 Binde r驱动程序就会将相应的错误码保存在其成员变量 return_error 和 reutrn_error2 中，这时候线程就会将这些错误返回给用户空间应用程序处理。
 
+
+### binder_transaction
+
+binder_transaction 是 binder_work 的一个实现，也就是 "子类"。当 binder 驱动程序为目标进程或者目标线程创建一个事务时，就会将该事务的成员变量 work 的值设置为 BINDER_WORK_TRANSACTION，并且将它添加到目标进程或者目标线程的 todo 队列中去等待处理。
+
+成员变量 need_reply 用来区分一个事务是同步的还是异步的。同步事务需要等待对方回复，这时候它的成员变量 need_reply 的值就会设置为 1；否则就设置为 0，表示这是一个异步事务，不需要等待回复。
+
+```c
+struct binder_transaction {
+	int debug_id;
+	struct binder_work work;
+	struct binder_thread *from;
+	struct binder_transaction *from_parent;
+	struct binder_proc *to_proc;
+	struct binder_thread *to_thread;
+	struct binder_transaction *to_parent;
+	unsigned need_reply : 1;
+	/*unsigned is_dead : 1;*/ /* not used at the moment */
+
+	struct binder_buffer *buffer;
+	unsigned int	code;
+	unsigned int	flags;
+	long	priority;		// 源线程优先级
+	long	saved_priority; // binder 驱动
+	uid_t	sender_euid;
+};
+```
+
+成员变量 from 指向发起事务的线程，称为源线程；成员变量 to_proc 和 to_thread 分别指向负责处理该事务的进程和线程，称为目标进程和目标线程。
+
+成员变量 priority 和 sender_euid 分别用来描述源线程的优先级和用户 ID。通过这两个成员变量，目标进程或者目标线程就可以识别事务发起方的身份。
+
+一个线程在处理一个事务时，Binder驱动程序需要修改它的线程优先级，以便满足源线程和目标 Service 组件的要求。Binder 驱动程序在修改一个线程的优先级之前，会将它原来的线程优先级保存在一个事务结构体的成员变量 saved_priority 中，以便线程处理完成该事务后可以恢复原来的优先级。
+
+成员变量 buffer 指向 Binder 驱动程序为该事务分配的一块内核缓冲区，它里面保存了进程间通信数据。
+
+成员变量 from_parent 和 to_parent 分别描述一个事务所依赖的另外一个事务，以及目标线程下一个需要处理的事务。
+
+假设线程A发起了一个事务T1，需要由线程B来处理；线程B在处理事务T1时，又需要线程C先处理事务T2；线程C在处理事务T2时，又需要线程A先处理事务T3。这样，事务T1就依赖于事务T2，而事务T2又依赖于事务T3，它们的关系如下：
+
+```c
+T2-＞from_parent=T1;
+T3-＞from_parent=T2;
+```
+
+对于线程A来说，它需要处理的事务有两个，分别是T1和T3，它首先要处理事务T3，然后才能处理事务T1，因此，事务T1和T3的关系如下：
+
+```c
+T3-＞to_parent=T1;
+```
+
+考虑这样一个情景：如果线程 C 在发起事务 T3 给线程 A 所属的进程来处理时，Binder 驱动程序选择了该进程的另外一个线程 D 来处理该事务，这时候会出现什么情况呢? 这时候线程 A 就会处于空闲等待状态，什么也不能做，因为它必须要等线程 D 处理完成事务 T3 后，它才可以继续执行事务 T1。在这种情况下，与其让线程 A 闲着，还不如把事务 T3 交给它来处理，这样线程 D 就可以去处理其他事务，提高了进程的并发性。
+
+现在，关键的问题又来了——Binder驱动程序在分发事务T3给目标进程处理时，它是如何知道线程A属于目标进程，并且正在等待事务T3的处理结果的?当线程C在处理事务T2时，就会将事务T2放在其事务堆栈transaction_stack的最前端。这样当线程C发起事务T3给线程A所属的进程处理时，Binder驱动程序就可以沿着线程C的事务堆栈transaction_stack向下遍历，即沿着事务T2的成员变量from_parent向下遍历，最后就会发现事务T3的目标进程等于事务T1的源进程，并且事务T1是由线程A发起的，这时候它就知道线程A正在等待事务T3的处理结果了。
+
+线程A在处理事务T3时，Binder驱动程序会将事务T3放在其事务堆栈transaction_stack的最前端，而在此之前，该事务堆栈transaction_stack的最前端指向的是事务T1。为了能够让线程A处理完成事务T3之后，接着处理事务T1，Binder驱动程序会将事务T1保存在事务T3的成员变量to_parent中。等到线程A处理完成事务T3之后，就可以通过事务T3的成员变量to_parent找到事务T1，再将它放在线程A的事务堆栈transaction_stack的最前端了。
+
+
