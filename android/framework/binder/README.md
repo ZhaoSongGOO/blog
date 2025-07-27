@@ -753,6 +753,12 @@ struct binder_ptr_cookie {
 
 结构体binder_transaction_data用来描述进程间通信过程中所传输的数据。
 
+成员变量target是一个联合体，用来描述一个目标Binder实体对象或者目标Binder引用对象。如果它描述的是一个目标Binder实体对象，那么它的成员变量ptr就指向与该Binder实体对象对应的一个Service组件内部的一个弱引用计数对象(weakref_impl)的地址；如果它描述的是一个目标Binder引用对象，那么它的成员变量handle就指向该Binder引用对象的句柄值。
+
+成员变量cookie是由应用程序进程指定的额外参数。当Binder驱动程序使用返回命令协议BR_TRANSACTION向一个Server进程发出一个进程间通信请求时，这个成员变量才有实际意义，它指向的是目标Service组件的地址。
+
+成员变量code是由执行进程间通信的两个进程互相约定好的一个通信代码，Binder驱动程序完全不关心它的含义
+
 ```c
 struct binder_transaction_data {
 	/* The first two are only used for bcTRANSACTION and brTRANSACTION,
@@ -787,3 +793,70 @@ struct binder_transaction_data {
 	} data;
 };
 ```
+
+成员变量flags是一个标志值，用来描述进程间通信行为特征，它的取值如下所示。
+- 如果成员变量flags的TF_ONE_WAY位被设置为1，就表示这是一个异步的进程间通信过程；
+- 如果成员变量flags的TF_ACCEPT_FDS位被设置为0，就表示源进程不允许目标进程返回的结果数据中包含有文件描述符；
+- 如果成员变量flags的TF_STATUS_CODE位被设置为1，就表示成员变量data所描述的数据缓冲区的内容是一个4字节的状态码。
+
+```c
+enum transaction_flags {
+	TF_ONE_WAY	= 0x01,	/* this is a one-way call: async, no return */
+	TF_ROOT_OBJECT	= 0x04,	/* contents are the component's root object */
+	TF_STATUS_CODE	= 0x08,	/* contents are a 32-bit status code */
+	TF_ACCEPT_FDS	= 0x10,	/* allow replies with file descriptors */
+};
+```
+
+成员变量sender_pid和sender_euid表示发起进程间通信请求的进程的PID和UID。这两个成员变量的值是由Binder驱动程序来填写的，因此，目标进程通过这两个成员变量就可以识别出源进程的身份，以便进行安全检查。
+
+成员变量data_size和offsets_size分别用来描述一个通信数据缓冲区以及一个偏移数组的大小。offsets_size 的值就是 data.ptr->offsets 这个数组的大小。
+
+成员变量data是一个联合体，它指向一个通信数据缓冲区。当通信数据较小时，就直接使用联合体内静态分配的数组buf来传输数据；
+
+当通信数据较大时，就需要使用一块动态分配的缓冲区来传输数据了。这块动态分配的缓冲区通过一个包含两个指针的结构体来描述，即通过联合体内的成员变量ptr来描述。结构体ptr的成员变量buffer指向一个数据缓冲区，它是真正用来保存通信数据的，它的大小由前面所描述的成员变量data_size来指定。当数据缓冲区中包含有Binder对象时，那么紧跟在这个数据缓冲区的后面就会有一个偏移数组offsets，用来描述数据缓冲区中每一个Binder对象的位置。有了这个偏移数组之后，Binder驱动程序就可以正确地维护其内部的Binder实体对象和Binder引用对象的引用计数
+
+<img src="android/framework/binder/resources/4.png" style="width:100%">
+
+
+#### flat_binder_object
+
+data 中每一个 binder 对象使用 flat_binder_object 结构来进行描述。
+
+```c
+struct flat_binder_object {
+	/* 8 bytes for large_flat_header. */
+	unsigned long		type;
+	unsigned long		flags;
+	/* 8 bytes of data. */
+	union {
+		void		*binder;	/* local object */
+		signed long	handle;		/* remote object */
+	};
+	/* extra data associated with local object */
+	void			*cookie;
+};
+```
+
+因为 flat_binder_object 不止可以描述 binder 对象，还可以描述文件描述符，所以使用 type 来进行区分。
+
+- BINDER_TYPE_BINDER 和 BINDER_TYPE_WEAK_BINDER 都是用来描述一个 Binder 实体对象的，前者描述的是一个强类型的 Binder 实体对象，而后者描述的是一个弱类型的Binder 实体对象。
+- BINDER_TYPE_HANDLE 和 BINDER_TYPE_WEAK_HANDLE 来描述一个Binder引用对象，前者描述的是一个强类型的Binder引用对象，而后者描述的是一个弱类型的Binder引用对象。
+- BINDER_TYPE_FD 描述一个文件描述符。
+
+```c
+#define B_PACK_CHARS(c1, c2, c3, c4) \
+	((((c1)<<24)) | (((c2)<<16)) | (((c3)<<8)) | (c4))
+#define B_TYPE_LARGE 0x85
+enum {
+	BINDER_TYPE_BINDER	= B_PACK_CHARS('s', 'b', '*', B_TYPE_LARGE),
+	BINDER_TYPE_WEAK_BINDER	= B_PACK_CHARS('w', 'b', '*', B_TYPE_LARGE),
+	BINDER_TYPE_HANDLE	= B_PACK_CHARS('s', 'h', '*', B_TYPE_LARGE),
+	BINDER_TYPE_WEAK_HANDLE	= B_PACK_CHARS('w', 'h', '*', B_TYPE_LARGE),
+	BINDER_TYPE_FD		= B_PACK_CHARS('f', 'd', '*', B_TYPE_LARGE),
+};
+```
+
+成员变量flags是一个标志值，只有当结构体flat_binder_object描述的是一个Binder实体对象时，它才有实际意义。目前只用到该成员变量的第0位到第8位。其中，第0位到第7位描述的是一个Binder实体对象在处理一个进程间通信请求时，它所运行在的线程应当具有的最小线程优先级；第8位用来描述一个Binder实体对象是否可以将一块包含有文件描述符的数据缓冲区传输给目标进程，如果它的值等于1，就表示允许，否则就不允许。
+
+成员变量binder和handle组成了一个联合体。当结构体flat_binder_object描述的是一个Binder实体对象时，那么就使用成员变量binder来指向与该Binder实体对象对应的一个Service组件内部的一个弱引用计数对象(weakref_impl)的地址，并且使用成员变量cookie来指向该Service组件的地址；当结构体flat_binder_object描述的是一个Binder引用对象时，那么就使用成员变量handle来描述该Binder引用对象的句柄值。 (这里我理解有实体和引用的区别在于，发起 binder 请求的进程如果和服务端同一个进程，就会返回实体，否则返回的引用)。
