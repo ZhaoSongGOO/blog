@@ -331,13 +331,13 @@ binder驱动程序不关心数据缓冲区中的普通数据，但是必须要�
 
 binder 驱动程序为进程分配的内核缓冲区的大小保存在成员变量 buffer_size 中。这些内核缓冲区有两个地址，其中一个是内核空间地址，另外一个是用户空间地址。内核空间地址是在 binder 驱动程序内部使用的，保存在成员变量buffer 中，而用户空间地址是在应用程序进程内部使用的，保存在成员变量 vma 中。这两个地址相差一个固定的值，保存在成员变量 user_buffer_offset 中。这样，给定一个用户空间地址或者一个内核空间地址，binder 驱动程序就可以计算出另外一个地址的大小。
 
-当进程接收到一个进程间通信请求时，Binder 驱动程序就将该请求封装成一个工作项，并且加入到进程的待处理工作项队列中，这个队列使用成员变量 todo 来描述。
+当进程接收到一个进程间通信请求时，binder 驱动程序就将该请求封装成一个工作项，并且加入到进程的待处理工作项队列中，这个队列使用成员变量 todo 来描述。
 
-Binder线程池中的空闲Binder线程会睡眠在由成员变量wait所描述的一个等待队列中，当它们的宿主进程的待处理工作项队列增加了新的工作项之后，Binder驱动程序就会唤醒这些线程，以便它们可以去处理新的工作项。
+binder线程池中的空闲binder线程会睡眠在由成员变量wait所描述的一个等待队列中，当它们的宿主进程的待处理工作项队列增加了新的工作项之后，binder驱动程序就会唤醒这些线程，以便它们可以去处理新的工作项。
 
-一个进程内部包含了一系列的Binder实体对象和Binder引用对象，进程使用三个红黑树来组织它们，其中，成员变量nodes所描述的红黑树是用来组织Binder实体对象的，它以Binder实体对象的成员变量ptr作为关键字；而成员变量refs_by_desc和refs_by_node所描述的红黑树是用来组织Binder引用对象的，前者以Binder引用对象的成员变量desc作为关键字，而后者以Binder引用对象的成员变量node作为关键字。
+一个进程内部包含了一系列的binder实体对象和binder引用对象，进程使用三个红黑树来组织它们，其中，成员变量nodes所描述的红黑树是用来组织binder实体对象的，它以binder实体对象的成员变量ptr作为关键字；而成员变量refs_by_desc和refs_by_node所描述的红黑树是用来组织binder引用对象的，前者以binder引用对象的成员变量desc作为关键字，而后者以binder引用对象的成员变量node作为关键字。
 
-而成员变量refs_by_desc和refs_by_node所描述的红黑树是用来组织Binder引用对象的，前者以Binder引用对象的成员变量desc作为关键字，而后者以Binder引用对象的成员变量node作为关键字。
+而成员变量refs_by_desc和refs_by_node所描述的红黑树是用来组织binder引用对象的，前者以binder引用对象的成员变量desc作为关键字，而后者以binder引用对象的成员变量node作为关键字。
 
 ```c
 struct binder_proc {
@@ -379,9 +379,9 @@ struct binder_proc {
 
 首先明确的是，这三种延迟任务都是由 binder 驱动内核去做的，而不是和 todo 一样分发给进程去做。
 
-- BINDER_DEFERRED_PUT_FILES: 当进程通过 Binder 传递了文件描述符，内核需要在消息传递完成后，适时地关闭或释放这些文件描述符。有时不能立刻释放（比如还在被使用），所以会把“释放文件描述符”这个操作延迟到合适时机（比如消息处理完成后）。
-- BINDER_DEFERRED_FLUSH: “Flush” 意为“刷新”，在 Binder 驱动中，通常指的是把积累的消息、命令等数据从内核缓冲区刷新到目标进程的消息队列中。有时出于效率或同步的考虑，不会每次消息到达都立即刷新，而是延迟到合适时机批量处理。
-- BINDER_DEFERRED_RELEASE: 当进程退出、断开 Binder 连接或某些资源不再需要时，Binder 驱动需要清理和释放相关资源。由于资源释放可能涉及复杂的依赖关系（比如还有其他进程引用），或者为了避免在关键路径上阻塞，Binder 驱动会把这些释放操作延迟到后续统一处理。
+- BINDER_DEFERRED_PUT_FILES: 当进程通过 binder 传递了文件描述符，内核需要在消息传递完成后，适时地关闭或释放这些文件描述符。有时不能立刻释放（比如还在被使用），所以会把“释放文件描述符”这个操作延迟到合适时机（比如消息处理完成后）。
+- BINDER_DEFERRED_FLUSH: “Flush” 意为“刷新”，在 binder 驱动中，通常指的是把积累的消息、命令等数据从内核缓冲区刷新到目标进程的消息队列中。有时出于效率或同步的考虑，不会每次消息到达都立即刷新，而是延迟到合适时机批量处理。
+- BINDER_DEFERRED_RELEASE: 当进程退出、断开 binder 连接或某些资源不再需要时，binder 驱动需要清理和释放相关资源。由于资源释放可能涉及复杂的依赖关系（比如还有其他进程引用），或者为了避免在关键路径上阻塞，binder 驱动会把这些释放操作延迟到后续统一处理。
 
 ```c
 enum {
@@ -390,4 +390,46 @@ enum {
 	BINDER_DEFERRED_RELEASE      = 0x04,
 };
 ```
+
+### binder_thread
+
+binder_thread 用来描述 binder 线程池中的一个线程，proc 指向其宿主进程 binder_proc, rb_node 是 proc 中 threads 红黑树的节点。
+
+```c
+struct binder_thread {
+	struct binder_proc *proc;
+	struct rb_node rb_node;
+	int pid; // 线程 id，这里因为 linux 下线程和进程的形式差不多，所以这里的名字也就叫 pid。
+	int looper;
+	struct binder_transaction *transaction_stack;
+	struct list_head todo;
+	uint32_t return_error; /* Write failed, return error code in read buf */
+	uint32_t return_error2; /* Write failed, return error code in read */
+		/* buffer. Used when sending a reply to a dead process that */
+		/* we are also waiting on */
+	wait_queue_head_t wait;
+	struct binder_stats stats;
+};
+```
+
+binder_thread 一个线程一般会不断的循环等待处理 binder 消息，所以为了描述这个循环等待的状态，引入了一个成员 looper，有下面几种类型，现在这些状态的含义先按下不表，等后面学习 binder 驱动流程的时候自然就会提到。
+
+```c
+enum {
+	BINDER_LOOPER_STATE_REGISTERED  = 0x01,
+	BINDER_LOOPER_STATE_ENTERED     = 0x02,
+	BINDER_LOOPER_STATE_EXITED      = 0x04,
+	BINDER_LOOPER_STATE_INVALID     = 0x08,
+	BINDER_LOOPER_STATE_WAITING     = 0x10,
+	BINDER_LOOPER_STATE_NEED_RETURN = 0x20
+};
+```
+
+当一个来自 Client 进程的请求指定要由某一个 binder 线程来处理时，这个请求就会加入到相应的 binder_thread 结构体的成员变量 todo 所表示的队列中，并且会唤醒这个线程来处理，因为这时候这个线程可能处于睡眠状态。
+
+当 binder 驱动程序决定将一个事务交给一个 binder 线程处理时，它就会将该事务封装成一个 binder_transaction 结构体，并且将它添加到由线程结构体 binder_thread 的成员变量 transaction_stack 所描述的一个事务堆栈中
+
+当一个 binder 线程在处理一个事务 T1 并需要依赖于其他的 binder 线程来处理另外一个事务 T2 时，它就会睡眠在由成员变量 wait 所描述的一个等待队列中，直到事务 T2 处理完成为止。
+
+一个 binder 线程在处理一个事务时，如果出现了异常情况，那么 Binde r驱动程序就会将相应的错误码保存在其成员变量 return_error 和 reutrn_error2 中，这时候线程就会将这些错误返回给用户空间应用程序处理。
 
