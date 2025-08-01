@@ -64,3 +64,108 @@ main.exe: util.o main.o
 
 
 ### 2.2 EXCEL: 牺牲了最小性的动态依赖
+
+
+```txt
+    "program" %> \out -> do
+        need ["o.txt"]
+        objs <- lines <$> readFile' "o.txt"
+        need objs
+        cmd_ "gcc" "-o" out objs
+
+    "o.txt" %> \out -> do
+        srcs <- getDirectoryFiles "src" ["//*.c"]
+        let objs = [dropDirectory1 s -<.> "o" | s <- srcs]
+        writeFile' out (unlines objs)
+
+    "*.o" %> \out -> do
+        let src = "src" </> (out -<.> "c")
+        need [src]
+        deps <- cmdValue "gcc" "-MM" src
+        need (words deps)
+        cmd_ "gcc" "-c" src "-o" out
+```
+
+假如我们有这样的一个工程，我们的编译目标是 program，它需要的目标文件列表保存在文件 o.txt 中，执行的时候就是从 o.txt 中拿出所有的目标文件，进行链接即可，在目标文件没有的时候，需要去执行编译指令完成目标文件的生成。
+
+当前的工作区状态如下:
+
+```txt
+./src/main.c
+./src/lib.c
+./lib.h
+```
+
+SHAKE 工作原理，SHAKE 包含 显式文件依赖 和 隐式动作依赖 两种依赖形式，使用 need 语法声明的就是式文件依赖，调用其他 API，例如 readFile 或者 getDirectoryFiles 就是隐式动作依赖。
+
+1. 首次执行 `shake program`
+
+- SHAKE 发现 program 不存在，就直接运行 program 的规则块。
+- 第一个规则依赖 o.txt, 发现 o.txt 不存在，就挂起当前 program 的规则运行并去运行 o.txt 的规则块。
+- o.txt 中第一个规则是从 src 目录下读取所有的 c 文件，并获取名字。随后将这些名字拼接上 .o 按照一行一个的格式写入 o.txt 文件。
+- o.txt 生成完成，重新执行 programe 规则块，program 从 o.txt 中读取每一行内容，并 依赖他们。这里就是 need ["main.o", "lib.o"]
+- 发现这两个 o 文件都没有，就暂停当前规则块，去执行对应的 *.o 规则块。
+- 以 main.o 规则块举例
+    - 里面依赖了 [src] 文件，但是 src 文件已经存在了所以没有阻塞，继续执行。
+    - 这里调用了 gcc -MM 指令获取这个文件依赖的头文件信息，并依赖，在这就是 ["lib.h"],因为 lib.h 存在，所以这里不会进行阻塞。
+    - 执行 gcc -c 生成对应的 main.o 文件
+- 唤醒 program 块，执行 gcc 生成最终的输出信息。
+
+首次执行完成后我们的工作区状态如下：
+
+```txt
+./src/main.c
+./src/lib.c
+./lib.h
+
+main.o                          // 编译产物
+lib.o                           // 编译产物
+program                         // 编译产物
+
+_build/deps_graph_data          // 编译依赖数据库
+```
+
+
+2. 重新执行
+
+- SHAKE 发现 program 存在，但是这不够，因为有可能依赖发生变化，所以 SHAKE 查看了自己的依赖数据库，首先发现 program 依赖了 o.txt。
+    - 检查 o.txt 是够需要重新构建，首先 o.txt 存在，
+    - 那就进一步查看依赖数据库，发现 o.txt 有一个 隐式动作依赖 getDirectoryFiles，执行这个动作，获取输出，和数据库中记录的输出做对比，发现没有变化。
+    - 判定 o.txt 没有变化。
+- SHAKE 发现自己还依赖了 main.o 和 lib.o
+    - 检查 main.o 是否需要重建，首先 main.o 存在。
+    - 进一步查看 main.o 的依赖数据库，发现依赖了同名 c 文件以及头文件。
+    - 查看数据库发现这些 c 文件和头文件没有任何变化。
+    - 判定 main.o 没有变化，lib.o 同理。
+- SHAKE 发现 program 所有的依赖都没有变化，判定不需要构建。
+
+3. 修改后执行
+
+简单的修改了源文件内容后，重新编译过程很容易理解。我们这里考虑一个特殊情况，就我在 src 目录下新增了一个 c 文件，此时，是否可以如预期一般，将这个 c 文件也参与编译和链接。
+
+```txt
+./src/main.c
+./src/lib.c
+./src/new.c  <---- 新增这个文件
+./lib.h
+
+main.o                         
+lib.o                           
+program                       
+
+_build/deps_graph_data     
+```
+
+- SHAKE 发现 program 存在，但是这不够，因为有可能依赖发生变化，所以 SHAKE 查看了自己的依赖数据库，首先发现 program 依赖了 o.txt。
+    - 检查 o.txt 是够需要重新构建，首先 o.txt 存在，
+    - 那就进一步查看依赖数据库，发现 o.txt 有一个 隐式动作依赖 getDirectoryFiles，执行这个动作，获取输出，和数据库中记录的输出做对比。发现新增了一个 new.o 的内容。
+    - 判定 o.txt 发生变化。
+- 判定 program 需要重新构建，执行规则块，首先阻塞在 o.txt 规则块，等待 o.txt 执行完成。
+    - o.txt 是过期的，所以重新执行，生成新的 o.txt (包含 new.o 项)，唤醒 program。
+- program 继续执行，发现自己依赖了 ["main.o", "lib.o", "new.o"]
+    - 执行 main.o 和 lib.o 发现他们是最新的，跳过。
+    - 执行 new.o，发现 new.o 不存在，对依赖的 new.c 和 所需头文件做了存在判断后，执行 gcc -c 生成 new.o
+- program 继续执行，生成新的 program 可执行文件。
+
+
+
