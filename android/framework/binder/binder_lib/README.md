@@ -2,9 +2,7 @@
 
 > 对应的进程间通信库版本是 android-2.3.2_r1
 
-## 最基础的数据类型
-
-### BnInterface & BpInterface
+## BnInterface & BpInterface
 
 `BnInterface` 对应的是 binder 实体对象，即 binder_node，`BpInterface` 对应的是 binder 引用对象。
 
@@ -35,7 +33,7 @@ protected:
 };
 ```
 
-### BBinder
+## BBinder
 
 BBinder 类有两个重要的成员函数 transact 和 onTransact。当一个 Binder 代理对象通过 Binder 驱动程序向一个 Binder 本地对象发出一个进程间通信请求时，Binder 驱动程序就会调用该 Binder 本地对象的成员函数 transact 来处理该请求。成员函数 onTransact 是由 BBinder 的子类，即 Binder 本地对象类来实现的，它负责分发与业务相关的进程间通信请求。
 
@@ -64,7 +62,7 @@ protected:
 };
 ```
 
-### BpRefBase
+## BpRefBase
 
 模板类BpInterface继承了BpRefBase类，后者为Binder代理对象提供了抽象的进程间通信接口。
 
@@ -93,7 +91,7 @@ private:
 };
 ```
 
-### BpBinder
+## BpBinder
 
 BpBinder 类的成员变量 mHandle 是一个整数，它表示一个 Client 组件的句柄值，可以通过成员函数 handle 来获取。
 
@@ -126,7 +124,7 @@ private:
 BpBinder 类的成员函数 transact 用来向运行在 Server 进程中的 Service 组件发送进程间通信请求，这是通过 Binder 驱动程序间接实现的。BpBinder 类的成员函数transact 会把 BpBinder 类的成员变量 mHandle，以及进程间通信数据发送给 Binder 驱动程序，这样 Binder 驱动程序就能够根据这个句柄值来找到对应的 Binder 引用对象，继而找到对应的 Binder 实体对象，最后就可以将进程间通信数据发送给对应的 Service 组件了。
 
 
-### IPCThreadState
+## IPCThreadState
 
 IPCThreadState 屏蔽了 binder 驱动的细节，用于其余对象与 binder 驱动进行通信。它一方面负责向 Binder 驱动程序发送进程间通信请求，另一方面又负责接收来自 Binder 驱动程序的进程间通信请求。
 ```cpp
@@ -149,7 +147,7 @@ private:
 };
 ```
 
-### ProcessState
+## ProcessState
 
 对于每一个使用了 Binder 进程间通信机制的进程来说，它的内部都有一个 ProcessState 对象，它负责初始化 Binder 设备，即打开设备文件 /dev/binder，以及将设备文件 /dev/binder 映射到进程的地址空间。由于这个 ProcessState 对象在进程范围内是唯一的，因此，Binder 线程池中的每一个线程都可以通过它来和 Binder 驱动程序建立连接。
 
@@ -173,3 +171,12 @@ private:
 };
 ```
 
+## 类图
+
+1. Service 组件实现原理
+
+<img src="android/framework/binder/binder_lib/resources/1.png" style="width:80%">
+
+2. Client 组件实现原理
+
+<img src="android/framework/binder/binder_lib/resources/2.png" style="width:80%">
