@@ -124,9 +124,12 @@ private:
 BpBinder 类的成员函数 transact 用来向运行在 Server 进程中的 Service 组件发送进程间通信请求，这是通过 Binder 驱动程序间接实现的。BpBinder 类的成员函数transact 会把 BpBinder 类的成员变量 mHandle，以及进程间通信数据发送给 Binder 驱动程序，这样 Binder 驱动程序就能够根据这个句柄值来找到对应的 Binder 引用对象，继而找到对应的 Binder 实体对象，最后就可以将进程间通信数据发送给对应的 Service 组件了。
 
 
-## IPCThreadState
+## IPCThreadState(线程级)
+
+代表了单个线程与 Binder 驱动的交互状态。每个与 Binder 通信的线程都有 自己独立的一个 `IPCThreadState` 实例（通过线程局部存储 Thread Local Storage 实现）。
 
 IPCThreadState 屏蔽了 binder 驱动的细节，用于其余对象与 binder 驱动进行通信。它一方面负责向 Binder 驱动程序发送进程间通信请求，另一方面又负责接收来自 Binder 驱动程序的进程间通信请求。
+
 ```cpp
 class IPCThreadState
 {
@@ -147,7 +150,9 @@ private:
 };
 ```
 
-## ProcessState
+## ProcessState(进程级)
+
+代表了你的服务进程与整个 Android Binder 系统的连接。
 
 对于每一个使用了 Binder 进程间通信机制的进程来说，它的内部都有一个 ProcessState 对象，它负责初始化 Binder 设备，即打开设备文件 /dev/binder，以及将设备文件 /dev/binder 映射到进程的地址空间。由于这个 ProcessState 对象在进程范围内是唯一的，因此，Binder 线程池中的每一个线程都可以通过它来和 Binder 驱动程序建立连接。
 
