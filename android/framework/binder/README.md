@@ -7,3 +7,6 @@
 ## [Binder 进程间通信库](android/framework/binder/binder_lib/)
 
 ## [Binder 进程间通信举例](android/framework/binder/binder_demo/)
+
+## [Binder 对象引用计数技术](android/framework/binder/binder_ref_count/)
+
