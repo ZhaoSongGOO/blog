@@ -161,14 +161,198 @@ fun Counter() {
 <img src="android/app/jetpack-compose/resources/2.png" style="width:40%">
 
 
+## UI 篇
 
-## Modifier
+### Modifier
 
 类似于 XML 中的属性设置，Compose 提供了这个组件属性来链式设置组件样式。
 
-## 基础组件
+#### Modifier.size
+
+设置组件的大小。
+
+```java
+Modifier.size(100.dp)
+Modifier.size(width=20.dp, height=30.dp)
+```
+
+#### Modifier.background
+
+设置组件背景色。
+
+```java
+Modifier.background(Color.Red)  // 纯色
+
+var verticalGradientColor = Brush.verticalGradient(
+    colors = listOf(
+        Color.Red,
+        Color.Blue
+    )
+)
+
+Modifier.background(verticalGradientColor) // 渐变色
+```
+
+#### Modifier.fillMaxSize
+
+尺寸填充。
+
+```java
+Modifier.fillMaxSize() // 在宽高上尺寸填充父容器
+
+Modifier.fillMaxWidth() // 宽度填充父容器
+
+Modifier.fillMaxHeight() // 高度填充父容器
+```
+
+#### Modifier.border && Modifier.padding
+
+border 用来给组件增加边框，边框可以指定粗细，颜色和形状，padding 可以在边框前后增加间隙，对应的就是内外边距。
+
+```java
+Modifier.padding(8.dp) // 外边距
+        .border(2.dp, Color.Red, shape = RoundedConrnerShape(2.dp))
+        .padding(8.dp)  // 内边距
+```
+
+
+
+### 基础组件
 
 https://developer.android.com/develop/ui/compose/components?hl=en
+
+### 基础布局
+
+1. 线性布局
+
+Row & Column
+
+2. 帧布局
+
+Box, 类似的还有一个自带很多视觉属性设置的 Surface。
+
+3. 留白，占位
+
+Spacer
+
+4. 约束布局
+
+- 基础使用
+
+```java
+@Composable
+fun ConstraintTest(){
+    ConstraintLayout (
+        modifier = Modifier.fillMaxWidth().padding(16.dp).background(color = Color.Blue)
+    ){
+        val (avatar, username, nickname, followButton) = createRefs()
+        Image(
+            painter = painterResource(id = R.drawable.robot_8), // 替换成你自己的图片资源
+            contentDescription = "User Avatar",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(64.dp)
+                .clip(CircleShape)
+                // 关联引用并定义约束
+                .constrainAs(avatar) {
+                    // 约束1：左边缘链接到父容器的左边缘
+                    start.linkTo(parent.start)
+                    // 约束2：顶部链接到父容器的顶部
+                    top.linkTo(parent.top)
+                }
+        )
+        // --- 用户名 (Username) ---
+        Text(
+            text = "Compose Master",
+            style = typography.titleMedium,
+            modifier = Modifier.constrainAs(username) {
+                // 约束1：左边缘链接到头像的右边缘，并有 16.dp 的间距
+                start.linkTo(avatar.end, margin = 16.dp)
+                // 约束2：顶部链接到头像的顶部
+                top.linkTo(avatar.top)
+                // 约束3：右边缘链接到按钮的左边缘，有 8.dp 间距
+                end.linkTo(followButton.start, margin = 8.dp)
+                // 关键：设置宽度以避免文本过长时超出按钮
+                width = Dimension.preferredWrapContent
+            }
+        )
+        // --- 昵称 (Nickname) ---
+        Text(
+            text = "@jetpack_compose_fan",
+            style = typography.bodySmall,
+            modifier = Modifier.constrainAs(nickname) {
+                // 约束1：左边缘链接到用户名的左边缘 (实现左对齐)
+                start.linkTo(username.start)
+                // 约束2：顶部链接到用户名的底部，有 4.dp 的间距
+                top.linkTo(username.bottom, margin = 4.dp)
+            }
+        )
+        // --- 关注按钮 (Follow Button) ---
+        Button(
+            onClick = { /*TODO*/ },
+            modifier = Modifier.constrainAs(followButton) {
+                // 约束1：右边缘链接到父容器的右边缘
+                end.linkTo(parent.end)
+                // 约束2 & 3：顶部和底部链接到头像的顶部和底部，实现垂直居中
+                top.linkTo(avatar.top)
+                bottom.linkTo(avatar.bottom)
+            }
+        ){
+            Text("Follow")
+        }
+    }
+}
+```
+
+- Guideline 引导线
+
+创建一条看不见的水平或垂直线（可以按 dp 或百分比定位），然后其他组件可以约束到这条线上。非常适合做统一的边距对齐。
+
+```java
+val startGuideline = createGuidelineFromStart(16.dp)
+// 然后在组件中
+// start.linkTo(startGuideline)
+```
+
+- Barrier (屏障)
+    
+创建一个动态的屏障。它的位置由它引用的多个组件中最长或最高的那一个决定。比如，你想让一个按钮始终位于两个不同长度的文本的右边，就可以创建一个 `end` Barrier。
+
+```java
+val textBarrier = createEndBarrier(username, nickname)
+// 然后在按钮中
+// start.linkTo(textBarrier, margin = 16.dp)
+```
+
+- Chain (链)
+
+将多个组件在水平或垂直方向上链接在一起，像链条一样。然后可以定义这条“链”的分布方式（`ChainStyle.Spread`, `ChainStyle.SpreadInside`, `ChainStyle.Packed`）。
+
+```java
+createHorizontalChain(button1, button2, button3, chainStyle = ChainStyle.Spread)
+
+// `ChainStyle.Spread` (展开) 这是默认的链样式。它会将所有链内元素均匀地分布在可用空间内，包括两端的空间。
+// | <--> [  A  ] <--> [  B  ] <--> [  C  ] <--> |
+
+// `ChainStyle.SpreadInside` (内部展开)这个样式会将两端的元素“钉”在链的边界上，然后将剩余的空间均匀地分布在元素之间。
+// | [  A  ] <------> [  B  ] <------> [  C  ] |
+
+// `ChainStyle.Packed` (打包/紧凑),这个样式会将所有元素打包在一起，然后将整个组作为一个整体在链的空间内居中。
+// | <--------> [ A ]-[ B ]-[ C ] <--------> |
+
+```
+
+- Bias (偏移)
+
+当你同时约束了一个组件的相对两侧（比如 `start` 和 `end`），你可以使用 `horizontalBias` (0f 到 1f) 来控制它在这两者之间的位置。`0.5f` 是居中，`0f` 是靠左，`1f` 是靠右。
+
+```java
+start.linkTo(parent.start)
+end.linkTo(parent.end)
+horizontalBias = 0.25f // 组件会位于左边 1/4 处
+```
+
+### Scaffold 脚手架
 
 ## 组件数据共享
 
