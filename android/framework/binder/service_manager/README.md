@@ -1087,7 +1087,10 @@ Service 组件注册到内部的 Service 组件列表 svclist 中之后，接着
 		}
 ```
 
-随后会封装一个 binder_transaction_data，并把它拷贝到源进程的用户空间中。随后 IPCThreadState::waitForResponse 进行处理，校验结果，并再一次发送 BC_FREE_BUFFER 消息给驱动释放内核缓冲区。
+随后会封装一个 binder_transaction_data，并把它拷贝到源进程的用户空间中。返回 IPCThreadState::waitForResponse 进行处理，校验结果，并再一次发送 BC_FREE_BUFFER 消息给驱动释放内核缓冲区。
+
+
+## 启动线程池
 
 
 
