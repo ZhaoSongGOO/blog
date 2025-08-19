@@ -29,6 +29,8 @@
 
 ## [设备系统启动](aosp/boot/)
 
+## [Apk 安装流程梗概](aosp/packageinstall/)
+
 
 ## 巨人的肩膀
 

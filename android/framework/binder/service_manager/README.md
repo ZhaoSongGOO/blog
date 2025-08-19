@@ -344,19 +344,19 @@ status_t flatten_binder(const sp<ProcessState>& proc,
             }
         */
         IBinder *local = binder->localBinder();
-        if (!local) {
-            BpBinder *proxy = binder->remoteBinder();
-            if (proxy == NULL) {
-                LOGE("null proxy");
-            }
-            const int32_t handle = proxy ? proxy->handle() : 0;
-            obj.type = BINDER_TYPE_HANDLE;
-            obj.handle = handle;
-            obj.cookie = NULL;
+        if (!local) { // 不走这里，走下面
+            // BpBinder *proxy = binder->remoteBinder();
+            // if (proxy == NULL) {
+            //     LOGE("null proxy");
+            // }
+            // const int32_t handle = proxy ? proxy->handle() : 0;
+            // obj.type = BINDER_TYPE_HANDLE;
+            // obj.handle = handle;
+            // obj.cookie = NULL;
         } else {
             obj.type = BINDER_TYPE_BINDER;
             obj.binder = local->getWeakRefs();
-            obj.cookie = local;
+            obj.cookie = local; // cookie 指向本地的 IBinder 地址
         }
     } else {
         obj.type = BINDER_TYPE_BINDER;
