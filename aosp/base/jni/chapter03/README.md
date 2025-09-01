@@ -38,7 +38,7 @@ java/lang/String
 
 String func()    ()Ljava/lang/String;
 int func(int i, String s)  (ILjava/lang/String;)I
-void func(String a, String[] b)  (Ljava/lang/String;[L/java/lang/String)V
+void func(String a, String[] b)  (Ljava/lang/String;[L/java/lang/String;)V
 ```
 
 
