@@ -2,7 +2,9 @@
 
 ## 简介
 
-binder 进程间通信机制是在 Openbinder 的基础上实现的，它采用 CS 通信方式，其中，提供服务的进程称为 Server 进程，而访问服务的进程称为Client进程。同一个 Server 进程可以同时运行多个组件来向 Client 进程提供服务，这些组件称为 Service 组件。同时，同一个 Client 进程也可以同时向多个Service 组件请求服务，每一个请求都对应有一个 Client 组件，或者称为 Service 代理对象。binder 进程间通信机制的每一个 Server 进程和 Client 进程都维护一个 binder 线程池来处理进程间的通信请求，因此，Server 进程和 Client 进程可以并发地提供和访问服务。
+binder 进程间通信机制是在 Openbinder 的基础上实现的，它采用 CS 通信方式，其中，提供服务的进程称为 Server 进程，而访问服务的进程称为 Client 进程。
+
+同一个 Server 进程可以同时运行多个组件来向 Client 进程提供服务，这些组件称为 Service 组件。同时，同一个 Client 进程也可以同时向多个 Service 组件请求服务，每一个请求都对应有一个 Client 组件，或者称为 Service 代理对象。binder 进程间通信机制的每一个 Server 进程和 Client 进程都维护一个 binder 线程池来处理进程间的通信请求，因此，Server 进程和 Client 进程可以并发地提供和访问服务。
 
 Server 进程和 Client 进程的通信要依靠运行在内核空间的 binder 驱动程序来进行。binder 驱动程序向用户空间暴露了一个设备文件 /dev/binder，使得应用程序进程可以间接地通过它来建立通信通道。Service 组件在启动时，会将自己注册到一个 Service Manager 组件中，以便 Client 组件可以通过 ServiceManager 组件找到它。因此，我们将 Service Manager 组件称为 binder 进程间通信机制的上下文管理者，同时由于它也需要与普通的 Server 进程和Client进程通信，我们也将它看作是一个 Service 组件，只不过它是一个特殊的 Service 组件。
 
@@ -82,29 +84,13 @@ static inline void list_add(struct list_head *new, struct list_head *head)
 
 随后我们可能会在需要的时候进行遍历，在遍历的过程中，声明一个目标类型的指针，用来承载迭代过程中的目标对象，然后这个 list_for_each_entry 使用起来很神奇，第一个参数是我们刚声明的指针，第二个参数是链表地址，第三个参数是list_head 在你的结构里面的字段名，例如对于 binder_node 来说，就是 entry。可以看到这个宏展开后就是个 for(x;y;z) 的结构。
 
-- 使用 list_entry 来获取 entry 只想的 biner_work 节点，并返回地址到 pos。
-- prefetch 不需要关注，这个是一个优化，即将内容优先加载到 L1 缓存中。
-- pos->next 进入下一个节点。
-
-这里最有意思的就是这个 list_entry, 可以看到他接受的是 list_head 指针、binder_work 类型参数、list_head 指针在 binder_work 结构中对应的结构名 entry.
-
-随后 list_entry 直接转调 container_of 宏，这个宏只做了:
-
-<img src="android/framework/binder/data_struct/resources/2.png" style="width:20%">
-
-- 将 list_head 地址类型关联到 binder_work->entry。方便后续进行指针计算。
-- 使用 offset 获取 entry 字段在 binder_work 中的地址偏移。随后使用 list_head 指针减去 这个偏移量就是 binder_work 的地址。
-
-更有意思的是为了获取 offset，是先将地址 0 转换成 binder_work 指针类型，随后获取成员地址，那这样这个成员的地址其实就是偏移。需要注意的是，这里是获取成员地址操作，这是一个编译期逻辑，而不是空指针访问数据，空指针访问会触发段错误。如何区分是获取成员地址还是空指针访问，我理解区别就在于有没有声明对应的类型指针，声明了就是空指针访问，否则就是获取地址操作。
-
-
 ```c
 // linux/stddef.h
 #define offsetof(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
 
 // linux/kernel.h
 #define container_of(ptr, type, member) ({			\
-    const typeof( ((type *)0)->member ) *ç = (ptr);	\
+    const typeof( ((type *)0)->member ) *__mptr = (ptr);	\
     (type *)( (char *)__mptr - offsetof(type,member) );})
 
 // linux/list.h
@@ -122,9 +108,25 @@ static inline void list_add(struct list_head *new, struct list_head *head)
          prefetch(pos->member.next), &pos->member != (head); 	\
          pos = list_entry(pos->member.next, typeof(*pos), member))
 ```
+
+- 使用 list_entry 来获取 entry 指向的 biner_work 节点，并返回地址到 pos。
+- prefetch 不需要关注，这个是一个优化，即将内容优先加载到 L1 缓存中。
+- pos->next 进入下一个节点。
+
+这里最有意思的就是这个 list_entry, 可以看到他接受的是 list_head 指针、binder_work 类型参数、list_head 指针在 binder_work 结构中对应的结构名 entry.
+
+随后 list_entry 直接转调 container_of 宏，这个宏只做了:
+
+- 将 list_head 地址类型关联到 binder_work->entry。方便后续进行指针计算。
+- 使用 offset 获取 entry 字段在 binder_work 中的地址偏移。随后使用 list_head 指针减去 这个偏移量就是 binder_work 的地址。
+
+<img src="android/framework/binder/data_struct/resources/2.png" style="width:20%">
+
+更有意思的是为了获取 offset，是先将地址 0 转换成 binder_work 指针类型，随后获取成员地址，那这样这个成员的地址其实就是偏移。需要注意的是，这里是获取成员地址操作，这是一个编译期逻辑(凡是不需要运行期数据参与的逻辑都是编译期逻辑)，而不是空指针访问数据，空指针访问会触发段错误。
+
 然后是第二个问题，这么简单的一个结构体是如何承载不同 binder 工作项的信息的。
 
-其实这个 binder_work 只是一个"基类" 或者说标识，它用来在真正的 binder_work_xxx 中只是一个成员。
+其实这个 binder_work 只是一个"基类" 或者说标识，它在真正的 binder_work_xxx 中只是一个成员。
 
 例如 binder_transaction 这个子类。
 
@@ -174,6 +176,7 @@ struct binder_node {
 };
 ```
 1. **rb_node**
+
 每个进程（`binder_proc`）可能会注册/持有多个 binder 实体对象（比如一个进程可以有多个 binder 服务）。为了高效管理这些对象，binder 驱动在每个 `binder_proc` 里，用**红黑树（rbtree）**来存储和查找它所拥有的所有 `binder_node`，每个 binder_node 以 rb_node 的形式称为红黑树的节点。至于如何通过 rb_node 定位到 binder_node 呢？ 那就还是之前提到的 container_of 宏。
 
 2. **proc**
@@ -182,7 +185,7 @@ proc 成员是一个 binder_proc 类型，指向的是提供该 binder_node 的�
 
 3. **refs**
 
-一个binder实体对象可能会同时被多个Client组件引用，因此，binder驱动程序就使用结构体binder_ref来描述这些引用关系，并且将引用了同一个binder实体对象的所有引用都保存在一个hash列表中。这个hash列表通过binder实体对象的成员变量refs来描述，而binder驱动程序通过这个成员变量就可以知道有哪些Client组件引用了同一个binder实体对象。
+一个 binder 实体对象可能会同时被多个 Client 组件引用，因此，binder 驱动程序就使用结构体 binder_ref 来描述这些引用关系，并且将引用了同一个 binder 实体对象的所有引用都保存在一个 hash 列表中。这个 hash 列表通过 binder_node 的成员变量 refs 来描述，而binder 驱动程序通过这个成员变量就可以知道有哪些 Client 组件引用了同一个 binder_node。
 
 4. **local_strong_refs, internal_strong_refs, local_weak_refs**
 
@@ -196,15 +199,17 @@ proc 成员是一个 binder_proc 类型，指向的是提供该 binder_node 的�
 
 5. **ptr, cookie**
 
-ptr 和 cookie 指向两个用户空间的地址，其中，成员变量cookie指向该Service组件的地址，而成员变量ptr指向该Service组件内部的一个引用计数对象（类型为weakref_impl）的地址。
+ptr 和 cookie 指向两个用户空间的地址，其中，成员变量 cookie 指向该 Service 组件的地址，而成员变量 ptr 指向该 Service 组件内部的一个引用计数对象（类型为weakref_impl）的地址。
 
 6. **has_async_transaction**
 
-这个字段来表明当前 binder_node 即 server 组件是不是正在处理异步事务。一般情况下，binder驱动程序都是将一个事务保存在一个线程的一个todo队列中的，表示要由该线程来处理该事务。每一个事务都关联着一个binder实体对象，表示该事务的目标处理对象，即要求与该binder实体对象对应的Service组件在指定的线程中处理该事务。然而，当binder驱动程序发现一个事务是异步事务时，就会将它保存在目标binder实体对象的一个异步事务队列中，这个异步事务队列就是由该目标binder实体对象的成员变量async_todo来描述的。异步事务的定义是那些单向的进程间通信请求，即不需要等待应答的进程间通信请求，与此相对的便是同步事务。因为不需要等待应答，binder驱动程序就认为异步事务的优先级低于同步事务，具体就表现为在同一时刻，一个binder实体对象的所有异步事务至多只有一个会得到处理，其余的都等待在异步事务队列中，而同步事务就没有这个限制。
+> [如何理解同步和异步事务](android/framework/binder/ref/sync_async_task.md)
+
+这个字段来表明当前 binder_node 即 server 组件是不是正在处理异步事务。一般情况下，binder 驱动程序都是将一个事务保存在一个线程的一个 todo 队列中的，表示要由该线程来处理该事务。每一个事务都关联着一个 binder 实体对象，表示该事务的目标处理对象，即要求与该 binder 实体对象对应的 Service 组件在指定的线程中处理该事务。然而，当 binder 驱动程序发现一个事务是异步事务时，就会将它保存在目标 binder 实体对象的一个异步事务队列中，这个异步事务队列就是由该目标 binder 实体对象的成员变量 async_todo 来描述的。异步事务的定义是那些单向的进程间通信请求，即不需要等待应答的进程间通信请求，与此相对的便是同步事务。因为不需要等待应答，binder 驱动程序就认为异步事务的优先级低于同步事务，具体就表现为在同一时刻，一个 binder 实体对象的所有异步事务至多只有一个会得到处理，其余的都等待在异步事务队列中，而同步事务就没有这个限制。
 
 7. **work**
 
-binder_node 中有一个 binder_work 成员 work，就如刚才说的，binder_work 代表一个事务，那 node 为什么要持有 work 呢？主要目的是进行生命周期同步，当一个binder实体对象的引用计数由0变成1，或者由1变成0时，binder驱动程序就会请求相应的Service组件增加或者减少其引用计数。这时候binder驱动程序就会将该引用计数修改操作封装成一个类型为binder_node的工作项，即将一个binder实体对象的成员变量work的值设置为BINDER_WORK_NODE，并且将它添加到相应进程的todo队列中去等待处理。
+binder_node 中有一个 binder_work 成员 work，就如刚才说的，binder_work 代表一个事务，那 node 为什么要持有 work 呢？主要目的是进行生命周期同步，当一个binder实体对象的引用计数由 0 变成1，或者由 1 变成 0 时，binder 驱动程序就会请求相应的 Service 组件增加或者减少其引用计数。这时候 binder 驱动程序就会将该引用计数修改操作封装成一个类型为 binder_node 的工作项，即将一个 binder 实体对象的成员变量 work 的值设置为 BINDER_WORK_NODE，并且将它添加到相应进程的 todo 队列中去等待处理。
 
 8. **min_priority**
 
@@ -226,30 +231,30 @@ struct binder_ref_death {
 };
 ```
 
-结构体binder_ref_death用来描述一个Service组件的死亡接收通知。在正常情况下，一个Service组件被其他Client进程引用时，它是不可以销毁的。然而，Client进程是无法控制它所引用的Service组件的生命周期的，因为Service组件所在的进程可能会意外地崩溃，从而导致它意外地死亡。一个折中的处理办法是，Client进程能够在它所引用的Service组件死亡时获得通知，以便可以做出相应的处理。这时候Client进程就需要将一个用来接收死亡通知的对象的地址注册到binder驱动程序中。
+结构体 binder_ref_death 用来描述一个 Service 组件的死亡接收通知。在正常情况下，一个 Service 组件被其他 Client 进程引用时，它是不可以销毁的。然而，Client 进程是无法控制它所引用的 Service 组件的生命周期的，因为 Service 组件所在的进程可能会意外地崩溃，从而导致它意外地死亡。一个折中的处理办法是，Client 进程能够在它所引用的 Service 组件死亡时获得通知，以便可以做出相应的处理。这时候 Client 进程就需要将一个用来接收死亡通知的对象的地址注册到 binder 驱动程序中。
 
-成员变量cookie用来保存负责接收死亡通知的对象的地址，成员变量work的取值为BINDER_WORK_DEAD_BINDER、BINDER_WORK_CLEAR_DEATH_NOTIFICATION或者BINDER_WORK_DEAD_BINDER_AND_CLEAR，用来标志一个具体的死亡通知类型。
+成员变量 cookie 用来保存负责接收死亡通知的对象的地址，成员变量 work 的取值为 BINDER_WORK_DEAD_BINDER、BINDER_WORK_CLEAR_DEATH_NOTIFICATION 或者 BINDER_WORK_DEAD_BINDER_AND_CLEAR，用来标志一个具体的死亡通知类型。
 
-binder驱动程序决定要向一个Client进程发送一个Service组件死亡通知时，会将一个binder_ref_death结构体封装成一个工作项，并且根据实际情况来设置该结构体的成员变量work的值，最后将这个工作项添加到Client进程的todo队列中去等待处理。
+binder 驱动程序决定要向一个 Client 进程发送一个 Service 组件死亡通知时，会将一个 binder_ref_death 结构体封装成一个工作项，并且根据实际情况来设置该结构体的成员变量 work 的值，最后将这个工作项添加到 Client 进程的 todo 队列中去等待处理。
 
 什么时候会发送死亡通知呢?
 
 client 在注册了死亡监听后，binder 驱动会在下面两种场景发送死亡通知。
 
-- 当binder驱动程序监测到一个Service组件死亡时，它就会找到该Service组件对应的binder实体对象，然后通过binder实体对象的成员变量refs就可以找到所有引用了它的Client进程，最后就找到这些Client进程所注册的死亡接收通知，即一个binder_ref_death结构体。这时候binder驱动程序就会将该binder_ref_death结构体添加到Client进程的todo队列中去等待处理。在这种情况下，binder驱动程序将死亡通知的类型设置为BINDER_WORK_DEAD_BINDER。
+- 当 binder 驱动程序监测到一个 Service 组件死亡时，它就会找到该 Service 组件对应的 binder_node，然后通过 binder_node 的成员变量 refs 就可以找到所有引用了它的 Client 进程，最后就找到这些 Client 进程所注册的死亡接收通知，即一个 binder_ref_death 结构体。这时候 binder 驱动程序就会将该 binder_ref_death 结构体添加到 Client 进程的 todo 队列中去等待处理。在这种情况下，binder 驱动程序将死亡通知的类型设置为 BINDER_WORK_DEAD_BINDER。
 
-- 当Client进程向binder驱动程序注册一个死亡接收通知时，如果它所引用的Service组件已经死亡，那么binder驱动程序就会马上发送一个死亡通知给该Client进程。在这种情况下，binder驱动程序也会将死亡通知的类型设置为BINDER_WORK_DEAD_BINDER。
+- 当 Client 进程向 binder 驱动程序注册一个死亡接收通知时，如果它所引用的 Service 组件已经死亡，那么 binder 驱动程序就会马上发送一个死亡通知给该 Client 进程。在这种情况下，binder 驱动程序也会将死亡通知的类型设置为 BINDER_WORK_DEAD_BINDER。
 
 
 client 也可以注销一个死亡监听，在注销的时候，binder 驱动也会发送一个类型为 binder_ref_death 的工作项到 client 进程的 todo 队列中。
 
-- 如果Client进程在注销一个死亡接收通知时，相应的Service组件还没有死亡，那么binder驱动程序就会找到之前所注册的一个binder_ref_death结构体，并且将它的类型work修改为BINDER_WORK_CLEAR_DEATH_NOTIFICATION，然后再将该binder_ref_death结构体封装成一个工作项添加到该Client进程的todo队列中去等待处理。
+- 如果 Client 进程在注销一个死亡接收通知时，相应的 Service 组件还没有死亡，那么 binder 驱动程序就会找到之前所注册的一个 binder_ref_death 结构体，并且将它的类型 work 修改为 BINDER_WORK_CLEAR_DEATH_NOTIFICATION，然后再将该 binder_ref_death 结构体封装成一个工作项添加到该 Client 进程的 todo 队列中去等待处理。
 
-- 如果Client进程在注销一个死亡接收通知时，相应的Service组件已经死亡，那么binder驱动程序就会找到之前所注册的一个binder_ref_death结构体，并且将它的类型work修改为BINDER_WORK_DEAD_BINDER_AND_CLEAR，然后再将该binder_ref_death结构体封装成一个工作项添加到该Client进程的todo队列中去等待处理。
+- 如果 Client 进程在注销一个死亡接收通知时，相应的 Service 组件已经死亡，那么 binder 驱动程序就会找到之前所注册的一个 binder_ref_death 结构体，并且将它的类型 work 修改为 BINDER_WORK_DEAD_BINDER_AND_CLEAR，然后再将该 binder_ref_death 结构体封装成一个工作项添加到该 Client 进程的 todo 队列中去等待处理。
 
 ### binder_ref
 
-binder_ref 代表一个进程对另一个进程 binder 实体对象 (binder_node) 的引用。在 binder 体系中，每个进程只能通过 handle（整数句柄）来引用别的进程的 binder 服务对象，而不能直接访问 binder_node。handle 和 binder_node 的映射关系，就是由 `binder_ref` 结构体来维护的。
+binder_ref 代表一个进程对另一个进程 binder 实体对象 (binder_node) 的引用。在 binder 体系中，每个进程只能通过 handle（整数句柄）来引用别的进程的 binder 服务对象，而不能直接访问 binder_node。handle 和 binder_node 的映射关系，就是由 binder_ref 结构体来维护的。
 
 ```c
 struct binder_ref {
@@ -269,8 +274,11 @@ struct binder_ref {
     struct binder_ref_death *death;
 };
 ```
+1. **desc**
 
 desc 在一个进程范围内是唯一的，也就是说在不同的进程下，同一个 desc 可能代表不同的的 binder_node。
+
+2. **rb_node_desc**, **rb_node_node**
 
 rb_node_desc 和 rb_node_node 这两个都是红黑树节点，每一个与binder 驱动交互的进程，都会构建了两个红黑树(维护在 binder_proc 结构中)，第一个以 desc 为 key ，第二个以 binder_node 为 key。这样子 binder 驱动可以高效的以 desc 或者 node 来查找到对应的 binder_ref。
 
@@ -279,7 +287,7 @@ rb_node_desc 和 rb_node_node 这两个都是红黑树节点，每一个与binde
 
 我这里有个疑问：refs_by_node 这个有必要吗，每一个 binder_node 不是会持有一个 refs 的hash 列表，里面保存着所有的 binder_ref 吗？
 
-主要是使用场景，refs 这个 hash 列表用于一个一个 binder_node 节点快速查看有哪些实体引用了自己。而 refs_by_node 服务的是 binder_proc, 只需要知道 node 节点，就可以找到对应的引用信息，即查找自己引用了哪些其余的实体。
+主要是使用场景，refs 这个 hash 列表用于一个一个 binder_node 节点快速查看有哪些实体引用了自己。而 refs_by_node 服务的是 binder_proc, 只需要知道 node 节点，就可以找到对应的引用信息。
 
 最后，death 存放的是死亡监听结构体，用于 server 死亡后发送死亡监听时提供输入信息。
 
@@ -289,9 +297,9 @@ binder_buffer 用来描述一个内核缓冲区，这个缓冲区用来进行进
 
 同时为了更高效的管理，每个进程维护了两棵红黑树，一棵树维护的是在使用中的 buffer，一颗维护着空闲的buffer，free 的值代表当前是不是空闲。
 
-成员变量transaction和target_node用来描述一个内核缓冲区正在交给哪一个事务以及哪一个binder实体对象使用。
+成员变量 transaction 和 target_node 用来描述一个内核缓冲区正在交给哪一个事务以及哪一个 binder 实体对象使用。
 
-sync_transaction 表明当前事务是不是异步事务，binder驱动程序限制了分配给异步事务的内核缓冲区的大小，这样做的目的是为了保证同步事务可以优先得到内核缓冲区，以便可以快速地对该同步事务进行处理。
+async_transaction 表明当前事务是不是异步事务，binder 驱动程序限制了分配给异步事务的内核缓冲区的大小，这样做的目的是为了保证同步事务可以优先得到内核缓冲区，以便可以快速地对该同步事务进行处理。
 
 ```c
 struct binder_buffer {
@@ -312,20 +320,20 @@ struct binder_buffer {
 };
 ```
 
-成员变量data指向一块大小可变的数据缓冲区，它是真正用来保存通信数据的。数据缓冲区保存的数据划分为两种类型，其中一种是普通数据，另一种是binder对象。
+成员变量 data 指向一块大小可变的数据缓冲区，它是真正用来保存通信数据的。数据缓冲区保存的数据划分为两种类型，其中一种是普通数据，另一种是 binder 对象。
 
-binder驱动程序不关心数据缓冲区中的普通数据，但是必须要知道里面的binder对象，因为它需要根据它们来维护内核中的binder实体对象和binder引用对象的生命周期。
+binder 驱动程序不关心数据缓冲区中的普通数据，但是必须要知道里面的 binder 对象，因为它需要根据它们来维护内核中的 binder 实体对象和 binder 引用对象的生命周期。
 
-例如，如果数据缓冲区中包含了一个binder引用，并且该数据缓冲区是传递给另外一个进程的，那么binder驱动程序就需要为另外一个进程创建一个binder引用对象，并且增加相应的binder实体对象的引用计数，因为它也被另外的这个进程引用了。
+例如，如果数据缓冲区中包含了一个 binder 引用，并且该数据缓冲区是传递给另外一个进程的，那么binder 驱动程序就需要为另外一个进程创建一个 binder 引用对象，并且增加相应的 binder 实体对象的引用计数，因为它也被另外的这个进程引用了。
 
-由于数据缓冲区中的普通数据和binder对象是混合在一起保存的，它们之间并没有固定的顺序，因此，binder驱动程序就需要额外的数据来找到里面的binder对象。在数据缓冲区的后面，有一个偏移数组，它记录了数据缓冲区中每一个binder对象在数据缓冲区中的位置。偏移数组的大小保存在成员变量offsets_size中，而数据缓冲区的大小保存在成员变量data_size中。
+由于数据缓冲区中的普通数据和 binder 对象是混合在一起保存的，它们之间并没有固定的顺序，因此，binder 驱动程序就需要额外的数据来找到里面的 binder 对象。在数据缓冲区的后面，有一个偏移数组，它记录了数据缓冲区中每一个 binder 对象在数据缓冲区中的位置。偏移数组的大小保存在成员变量offsets_size 中，而数据缓冲区的大小保存在成员变量 data_size 中。
 
 
 ### binder_proc
 
-结构体binder_proc用来描述一个正在使用binder进程间通信机制的进程。当一个进程调用函数open来打开设备文件/dev/binder时，binder驱动程序就会为它创建一个binder_proc结构体，并且将它保存在一个全局的hash列表中，而成员变量proc_node就正好是该hash列表中的一个节点。
+结构体 binder_proc 用来描述一个正在使用binder进程间通信机制的进程。当一个进程调用函数 open 来打开设备文件 /dev/binder 时，binder 驱动程序就会为它创建一个 binder_proc 结构体，并且将它保存在一个全局的 hash 列表中，而成员变量 proc_node 就正好是该 hash 列表中的一个节点。
 
-此外，成员变量pid、tsk和files分别指向了进程的进程组ID、任务控制块(😯，PCB!)和打开文件结构体数组。
+此外，成员变量 pid、tsk 和 files 分别指向了进程的进程组ID、任务控制块(😯，PCB!)和打开文件结构体数组。
 
 在打开了 binder 设备文件的进程中，一般后续还需要 mmap，我们对于普通文本文件进行 mmap 操作和对 binder 是不一样的，对于一个普通的文本文件，mmap 由内核进行处理。而对于 binder，mmap 会触发 binder 驱动注册的 .mmap 函数，这个函数进行实际的 mmap 动作。放在 binder 这里，就是 binder 驱动程序为它分配一块内核缓冲区，以便可以用来在进程间传输数据。
 
@@ -335,9 +343,10 @@ binder 驱动程序为进程分配的内核缓冲区的大小保存在成员变�
 
 binder线程池中的空闲binder线程会睡眠在由成员变量wait所描述的一个等待队列中，当它们的宿主进程的待处理工作项队列增加了新的工作项之后，binder驱动程序就会唤醒这些线程，以便它们可以去处理新的工作项。
 
-一个进程内部包含了一系列的binder实体对象和binder引用对象，进程使用三个红黑树来组织它们，其中，成员变量nodes所描述的红黑树是用来组织binder实体对象的，它以binder实体对象的成员变量ptr作为关键字；而成员变量refs_by_desc和refs_by_node所描述的红黑树是用来组织binder引用对象的，前者以binder引用对象的成员变量desc作为关键字，而后者以binder引用对象的成员变量node作为关键字。
+一个进程内部包含了一系列的binder实体对象和binder引用对象，进程使用三个红黑树来组织它们，其中，成员变量 nodes 所描述的红黑树是用来组织 binder 实体对象的，它以 binder 实体对象的成员变量 ptr 作为关键字。
 
-而成员变量refs_by_desc和refs_by_node所描述的红黑树是用来组织binder引用对象的，前者以binder引用对象的成员变量desc作为关键字，而后者以binder引用对象的成员变量node作为关键字。
+而成员变量 refs_by_desc 和 refs_by_node 所描述的红黑树是用来组织 binder 引用对象的，前者以 binder 引用对象的成员变量 desc 作为关键字，而后者以 binder 引用对象的成员变量 node 作为关键字。
+
 
 ```c
 struct binder_proc {
@@ -375,7 +384,7 @@ struct binder_proc {
 };
 ```
 
-成员变量deferred_work_node是一个hash列表，用来保存进程可以延迟执行的工作项。这些延迟工作项有三种类型，如下所示:
+成员变量 deferred_work_node 是一个 hash 列表，用来保存进程可以延迟执行的工作项。这些延迟工作项有三种类型，如下所示:
 
 首先明确的是，这三种延迟任务都是由 binder 驱动内核去做的，而不是和 todo 一样分发给进程去做。
 
@@ -424,6 +433,7 @@ enum {
     BINDER_LOOPER_STATE_NEED_RETURN = 0x20
 };
 ```
+> [两个 todo 队列的区别](android/framework/binder/ref/proc_thread_todo.md)
 
 当一个来自 Client 进程的请求指定要由某一个 binder 线程来处理时，这个请求就会加入到相应的 binder_thread 结构体的成员变量 todo 所表示的队列中，并且会唤醒这个线程来处理，因为这时候这个线程可能处于睡眠状态。
 
@@ -431,7 +441,7 @@ enum {
 
 当一个 binder 线程在处理一个事务 T1 并需要依赖于其他的 binder 线程来处理另外一个事务 T2 时，它就会睡眠在由成员变量 wait 所描述的一个等待队列中，直到事务 T2 处理完成为止。
 
-一个 binder 线程在处理一个事务时，如果出现了异常情况，那么 Binde r驱动程序就会将相应的错误码保存在其成员变量 return_error 和 reutrn_error2 中，这时候线程就会将这些错误返回给用户空间应用程序处理。
+一个 binder 线程在处理一个事务时，如果出现了异常情况，那么 binder 驱动程序就会将相应的错误码保存在其成员变量 return_error 和 reutrn_error2 中，这时候线程就会将这些错误返回给用户空间应用程序处理。
 
 
 ### binder_transaction
@@ -471,14 +481,16 @@ struct binder_transaction {
 
 成员变量 from_parent 和 to_parent 分别描述一个事务所依赖的另外一个事务，以及目标线程下一个需要处理的事务。
 
-假设线程A发起了一个事务T1，需要由线程B来处理；线程B在处理事务T1时，又需要线程C先处理事务T2；线程C在处理事务T2时，又需要线程A先处理事务T3。这样，事务T1就依赖于事务T2，而事务T2又依赖于事务T3，它们的关系如下：
+> [from_parent 和 to_parent 解释](android/framework/binder/ref/from_to_parent.md)
+
+假设线程 A 发起了一个事务 T1，需要由线程 B 来处理；线程 B 在处理事务 T1 时，又需要线程 C 先处理事务 T2；线程 C 在处理事务 T2 时，又需要线程 A 先处理事务 T3。这样，事务 T1 就依赖于事务 T2，而事务 T2 又依赖于事务 T3，它们的关系如下：
 
 ```c
 T2-＞from_parent=T1;
 T3-＞from_parent=T2;
 ```
 
-对于线程A来说，它需要处理的事务有两个，分别是T1和T3，它首先要处理事务T3，然后才能处理事务T1，因此，事务T1和T3的关系如下：
+对于线程 A 来说，它需要处理的事务有两个，分别是 T1 和 T3，它首先要处理事务 T3，然后才能处理事务 T1，因此，事务 T1 和 T3 的关系如下：
 
 ```c
 T3-＞to_parent=T1;
@@ -486,9 +498,9 @@ T3-＞to_parent=T1;
 
 考虑这样一个情景：如果线程 C 在发起事务 T3 给线程 A 所属的进程来处理时，Binder 驱动程序选择了该进程的另外一个线程 D 来处理该事务，这时候会出现什么情况呢? 这时候线程 A 就会处于空闲等待状态，什么也不能做，因为它必须要等线程 D 处理完成事务 T3 后，它才可以继续执行事务 T1。在这种情况下，与其让线程 A 闲着，还不如把事务 T3 交给它来处理，这样线程 D 就可以去处理其他事务，提高了进程的并发性。
 
-现在，关键的问题又来了——Binder驱动程序在分发事务T3给目标进程处理时，它是如何知道线程A属于目标进程，并且正在等待事务T3的处理结果的?当线程C在处理事务T2时，就会将事务T2放在其事务堆栈transaction_stack的最前端。这样当线程C发起事务T3给线程A所属的进程处理时，Binder驱动程序就可以沿着线程C的事务堆栈transaction_stack向下遍历，即沿着事务T2的成员变量from_parent向下遍历，最后就会发现事务T3的目标进程等于事务T1的源进程，并且事务T1是由线程A发起的，这时候它就知道线程A正在等待事务T3的处理结果了。
+现在，关键的问题又来了—— Binder 驱动程序在分发事务 T3 给目标进程处理时，它是如何知道线程 A 属于目标进程，并且正在等待事务 T3 的处理结果的?当线程 C 在处理事务 T2 时，就会将事务 T2 放在其事务堆栈 transaction_stack 的最前端。这样当线程 C 发起事务 T3 给线程 A 所属的进程处理时，Binder 驱动程序就可以沿着线程 C 的事务堆栈 transaction_stack 向下遍历，即沿着事务 T2 的成员变量 from_parent 向下遍历，最后就会发现事务 T3 的目标进程等于事务 T1 的源进程，并且事务 T1 是由线程 A 发起的，这时候它就知道线程 A 正在等待事务 T3 的处理结果了。
 
-线程A在处理事务T3时，Binder驱动程序会将事务T3放在其事务堆栈transaction_stack的最前端，而在此之前，该事务堆栈transaction_stack的最前端指向的是事务T1。为了能够让线程A处理完成事务T3之后，接着处理事务T1，Binder驱动程序会将事务T1保存在事务T3的成员变量to_parent中。等到线程A处理完成事务T3之后，就可以通过事务T3的成员变量to_parent找到事务T1，再将它放在线程A的事务堆栈transaction_stack的最前端了。
+线程 A 在处理事务 T3 时，Binder 驱动程序会将事务 T3 放在其事务堆栈 transaction_stack 的最前端，而在此之前，该事务堆栈 transaction_stack 的最前端指向的是事务 T1。为了能够让线程A处理完成事务 T3 之后，接着处理事务 T1，Binder 驱动程序会将事务 T1 保存在事务 T3 的成员变量 to_parent 中。等到线程 A 处理完成事务 T3 之后，就可以通过事务 T3 的成员变量 to_parent 找到事务 T1，再将它放在线程 A 的事务堆栈 transaction_stack 的最前端了。
 
 
 ### ioctl 通信数据格式
@@ -742,22 +754,22 @@ struct binder_ptr_cookie {
 };
 ```
 
-结构体binder_ptr_cookie用来描述一个Binder实体对象或者一个Service组件的死亡接收通知。
+结构体 binder_ptr_cookie 用来描述一个 Binder 实体对象或者一个 Service 组件的死亡接收通知。
 
-当结构体binder_ptr_cookie描述的是一个Binder实体对象时，成员变量ptr和cookie的含义等同于前面所介绍的结构体binder_node的成员变量ptr和cookie；
+当结构体 binder_ptr_cookie 描述的是一个 Binder 实体对象时，成员变量 ptr 和 cookie 的含义等同于前面所介绍的结构体binder_node 的成员变量 ptr 和 cookie；
 
-当结构体binder_ptr_cookie描述的是一个Service组件的死亡接收通知时，成员变量ptr指向的是一个Binder引用对象的句柄值，而成员变量cookie指向的是一个用来接收死亡通知的对象的地址 binder_ref_death。
+当结构体 binder_ptr_cookie 描述的是一个 Service 组件的死亡接收通知时，成员变量 ptr 指向的是一个 Binder 引用对象的句柄值，而成员变量 cookie 指向的是一个用来接收死亡通知的对象的地址 binder_ref_death。
 
 
 #### binder_transaction_data
 
-结构体binder_transaction_data用来描述进程间通信过程中所传输的数据。
+结构体 binder_transaction_data 用来描述进程间通信过程中所传输的数据。
 
-成员变量target是一个联合体，用来描述一个目标Binder实体对象或者目标Binder引用对象。如果它描述的是一个目标Binder实体对象，那么它的成员变量ptr就指向与该Binder实体对象对应的一个Service组件内部的一个弱引用计数对象(weakref_impl)的地址；如果它描述的是一个目标Binder引用对象，那么它的成员变量handle就指向该Binder引用对象的句柄值。
+成员变量 target 是一个联合体，用来描述一个目标 Binder 实体对象或者目标 Binder 引用对象。如果它描述的是一个目标 Binder 实体对象，那么它的成员变量 ptr 就指向与该 Binder 实体对象对应的一个 Service 组件内部的一个弱引用计数对象(weakref_impl)的地址；如果它描述的是一个目标 Binder 引用对象，那么它的成员变量 handle 就指向该 Binder 引用对象的句柄值。
 
-成员变量cookie是由应用程序进程指定的额外参数。当Binder驱动程序使用返回命令协议BR_TRANSACTION向一个Server进程发出一个进程间通信请求时，这个成员变量才有实际意义，它指向的是目标Service组件的地址。
+成员变量 cookie 是由应用程序进程指定的额外参数。当 Binder 驱动程序使用返回命令协议 BR_TRANSACTION 向一个 Server 进程发出一个进程间通信请求时，这个成员变量才有实际意义，它指向的是目标 Service 组件的地址。
 
-成员变量code是由执行进程间通信的两个进程互相约定好的一个通信代码，Binder驱动程序完全不关心它的含义
+成员变量 code 是由执行进程间通信的两个进程互相约定好的一个通信代码，Binder 驱动程序完全不关心它的含义
 
 ```c
 struct binder_transaction_data {
@@ -794,10 +806,10 @@ struct binder_transaction_data {
 };
 ```
 
-成员变量flags是一个标志值，用来描述进程间通信行为特征，它的取值如下所示。
-- 如果成员变量flags的TF_ONE_WAY位被设置为1，就表示这是一个异步的进程间通信过程；
-- 如果成员变量flags的TF_ACCEPT_FDS位被设置为0，就表示源进程不允许目标进程返回的结果数据中包含有文件描述符；
-- 如果成员变量flags的TF_STATUS_CODE位被设置为1，就表示成员变量data所描述的数据缓冲区的内容是一个4字节的状态码。
+成员变量 flags 是一个标志值，用来描述进程间通信行为特征，它的取值如下所示。
+- 如果成员变量 flags 的 TF_ONE_WAY 位被设置为1，就表示这是一个异步的进程间通信过程；
+- 如果成员变量 flags 的 TF_ACCEPT_FDS 位被设置为0，就表示源进程不允许目标进程返回的结果数据中包含有文件描述符；
+- 如果成员变量 flags 的 TF_STATUS_CODE 位被设置为1，就表示成员变量 data 所描述的数据缓冲区的内容是一个4字节的状态码。
 
 ```c
 enum transaction_flags {
@@ -808,13 +820,13 @@ enum transaction_flags {
 };
 ```
 
-成员变量sender_pid和sender_euid表示发起进程间通信请求的进程的PID和UID。这两个成员变量的值是由Binder驱动程序来填写的，因此，目标进程通过这两个成员变量就可以识别出源进程的身份，以便进行安全检查。
+成员变量 sender_pid 和 sender_euid 表示发起进程间通信请求的进程的 PID 和 UID。这两个成员变量的值是由 Binder 驱动程序来填写的，因此，目标进程通过这两个成员变量就可以识别出源进程的身份，以便进行安全检查。
 
-成员变量data_size和offsets_size分别用来描述一个通信数据缓冲区以及一个偏移数组的大小。offsets_size 的值就是 data.ptr->offsets 这个数组的大小。
+成员变量 data_size 和 offsets_size 分别用来描述一个通信数据缓冲区以及一个偏移数组的大小。offsets_size 的值就是 data.ptr->offsets 这个数组的大小。
 
-成员变量data是一个联合体，它指向一个通信数据缓冲区。当通信数据较小时，就直接使用联合体内静态分配的数组buf来传输数据；
+成员变量 data 是一个联合体，它指向一个通信数据缓冲区。当通信数据较小时，就直接使用联合体内静态分配的数组 buf 来传输数据；
 
-当通信数据较大时，就需要使用一块动态分配的缓冲区来传输数据了。这块动态分配的缓冲区通过一个包含两个指针的结构体来描述，即通过联合体内的成员变量ptr来描述。结构体ptr的成员变量buffer指向一个数据缓冲区，它是真正用来保存通信数据的，它的大小由前面所描述的成员变量data_size来指定。当数据缓冲区中包含有Binder对象时，那么紧跟在这个数据缓冲区的后面就会有一个偏移数组offsets，用来描述数据缓冲区中每一个Binder对象的位置。有了这个偏移数组之后，Binder驱动程序就可以正确地维护其内部的Binder实体对象和Binder引用对象的引用计数
+当通信数据较大时，就需要使用一块动态分配的缓冲区来传输数据了。这块动态分配的缓冲区通过一个包含两个指针的结构体来描述，即通过联合体内的成员变量 ptr 来描述。结构体 ptr 的成员变量 buffer 指向一个数据缓冲区，它是真正用来保存通信数据的，它的大小由前面所描述的成员变量 data_size 来指定。当数据缓冲区中包含有 Binder 对象时，那么紧跟在这个数据缓冲区的后面就会有一个偏移数组 offsets，用来描述数据缓冲区中每一个 Binder 对象的位置。有了这个偏移数组之后，Binder 驱动程序就可以正确地维护其内部的 Binder 实体对象和 Binder 引用对象的引用计数
 
 <img src="android/framework/binder/data_struct/resources/4.png" style="width:100%">
 
@@ -840,7 +852,7 @@ struct flat_binder_object {
 
 因为 flat_binder_object 不止可以描述 binder 对象，还可以描述文件描述符，所以使用 type 来进行区分。
 
-- BINDER_TYPE_BINDER 和 BINDER_TYPE_WEAK_BINDER 都是用来描述一个 Binder 实体对象的，前者描述的是一个强类型的 Binder 实体对象，而后者描述的是一个弱类型的Binder 实体对象。
+- BINDER_TYPE_BINDER 和 BINDER_TYPE_WEAK_BINDER 都是用来描述一个 Binder 实体对象的，前者描述的是一个强类型的 Binder 实体对象，而后者描述的是一个弱类型的 Binder 实体对象。
 - BINDER_TYPE_HANDLE 和 BINDER_TYPE_WEAK_HANDLE 来描述一个Binder引用对象，前者描述的是一个强类型的Binder引用对象，而后者描述的是一个弱类型的Binder引用对象。
 - BINDER_TYPE_FD 描述一个文件描述符。
 
@@ -857,9 +869,13 @@ enum {
 };
 ```
 
-成员变量flags是一个标志值，只有当结构体flat_binder_object描述的是一个Binder实体对象时，它才有实际意义。目前只用到该成员变量的第0位到第8位。其中，第0位到第7位描述的是一个Binder实体对象在处理一个进程间通信请求时，它所运行在的线程应当具有的最小线程优先级；第8位用来描述一个Binder实体对象是否可以将一块包含有文件描述符的数据缓冲区传输给目标进程，如果它的值等于1，就表示允许，否则就不允许。
+成员变量 flags 是一个标志值，只有当结构体 flat_binder_object 描述的是一个 Binder 实体对象时，它才有实际意义。目前只用到该成员变量的第 0 位到第 8 位。其中，第 0 位到第 7 位描述的是一个 Binder 实体对象在处理一个进程间通信请求时，它所运行在的线程应当具有的最小线程优先级；第 8 位用来描述一个 Binder 实体对象是否可以将一块包含有文件描述符的数据缓冲区传输给目标进程，如果它的值等于 1，就表示允许，否则就不允许。
 
-成员变量binder和handle组成了一个联合体。当结构体flat_binder_object描述的是一个Binder实体对象时，那么就使用成员变量binder来指向与该Binder实体对象对应的一个Service组件内部的一个弱引用计数对象(weakref_impl)的地址，并且使用成员变量cookie来指向该Service组件的地址；当结构体flat_binder_object描述的是一个Binder引用对象时，那么就使用成员变量handle来描述该Binder引用对象的句柄值。 (这里我理解有实体和引用的区别在于，发起 binder 请求的进程如果和服务端同一个进程，就会返回实体，否则返回的引用)。
+成员变量 binder 和 handle 组成了一个联合体。当结构体 flat_binder_object 描述的是一个 Binder 实体对象时，那么就使用成员变量 binder 来指向与该 Binder 实体对象对应的一个 Service 组件内部的一个弱引用计数对象(weakref_impl)的地址，并且使用成员变量 cookie 来指向该 Service 组件的地址；当结构体 flat_binder_object 描述的是一个 Binder 引用对象时，那么就使用成员变量 handle 来描述该 Binder 引用对象的句柄值。 (这里我理解有实体和引用的区别在于，发起 binder 请求的进程如果和服务端同一个进程，就会返回实体，否则返回的引用)。
+
+#### 几个通讯数据的交互流程
+
+[通信数据的交互流程](android/framework/binder/ref/data_convert.md)
 
 
 ### 结构之间的关系
