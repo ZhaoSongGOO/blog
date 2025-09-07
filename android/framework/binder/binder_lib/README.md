@@ -6,7 +6,7 @@
 
 `BnInterface` 对应的是 binder 实体对象，即 binder_node，`BpInterface` 对应的是 binder 引用对象。
 
-`INTERFACE` 是一个模版参数，由用户自己注入，代表 Service 组件接口，用户数组的这个接口需要实现 IInterface。
+`INTERFACE` 是一个模版参数，由用户自己注入，代表 Service 组件接口，这个接口需要实现 IInterface。
 
 ```cpp
 template<typename INTERFACE>
@@ -121,7 +121,7 @@ private:
 };
 ```
 
-BpBinder 类的成员函数 transact 用来向运行在 Server 进程中的 Service 组件发送进程间通信请求，这是通过 Binder 驱动程序间接实现的。BpBinder 类的成员函数transact 会把 BpBinder 类的成员变量 mHandle，以及进程间通信数据发送给 Binder 驱动程序，这样 Binder 驱动程序就能够根据这个句柄值来找到对应的 Binder 引用对象，继而找到对应的 Binder 实体对象，最后就可以将进程间通信数据发送给对应的 Service 组件了。
+BpBinder 类的成员函数 transact 用来向运行在 Server 进程中的 Service 组件发送进程间通信请求，这是通过 Binder 驱动程序间接实现的。BpBinder 类的成员函数 transact 会把 BpBinder 类的成员变量 mHandle，以及进程间通信数据发送给 Binder 驱动程序，这样 Binder 驱动程序就能够根据这个句柄值来找到对应的 Binder 引用对象，继而找到对应的 Binder 实体对象，最后就可以将进程间通信数据发送给对应的 Service 组件了。
 
 
 ## IPCThreadState(线程级)

@@ -449,6 +449,13 @@ binder_thread_write(struct binder_proc *proc, struct binder_thread *thread,
 				}
                 // 注销就很简单，直接置空 death 字段
 				ref->death = NULL;
+				// 判断这个 binder_ref_death 是不是已经在一个队列中被关联了
+				/*
+					static inline int list_empty(const struct list_head *head)
+					{
+						return head->next == head;
+					}
+				*/
 				if (list_empty(&death->work.entry)) {
 					death->work.type = BINDER_WORK_CLEAR_DEATH_NOTIFICATION;
                     // 向当前线程或者当前线程所属的Client进程的todo队列中添加一个类型为BINDER_WORK_CLEAR_DEATH_NOTIFICATION或者

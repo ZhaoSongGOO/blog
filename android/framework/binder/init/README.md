@@ -45,7 +45,7 @@ static int __init binder_init(void)
 
 然后注册了一个虚拟文件设备 /dev/binder, 并绑定这个虚拟设备文件的各种操作回调。
 
-接下来又在 /proc/binder 目录下创建了五个文件 tate、stats、transactions、transaction_log 和failed_transaction_log，通过这五个文件就可以读取到 binder 驱动程序的运行状况。例如，各个命令协议 (binderDriverCommandProtocol) 和返回协议 (binderDriverReturnProtocol) 的请求次数、日志记录信息，以及正在执行进程间通信过程的进程信息等。
+接下来又在 /proc/binder 目录下创建了五个文件 state、stats、transactions、transaction_log 和failed_transaction_log，通过这五个文件就可以读取到 binder 驱动程序的运行状况。例如，各个命令协议 (binderDriverCommandProtocol) 和返回协议 (binderDriverReturnProtocol) 的请求次数、日志记录信息，以及正在执行进程间通信过程的进程信息等。
 
 
 ## binder 设备打开

@@ -10,7 +10,7 @@
 
 ## [Binder 对象引用计数技术](android/framework/binder/binder_ref_count/)
 
-## [Binder 死亡通知计数](android/framework/binder/binder_death_notify/)
+## [Binder 死亡通知技术](android/framework/binder/binder_death_notify/)
 
 ## [Service Manager 启动过程](android/framework/binder/service_manager/)
 

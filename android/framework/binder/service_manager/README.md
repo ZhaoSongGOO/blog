@@ -604,7 +604,7 @@ status_t IPCThreadState::talkWithDriver(bool doReceive)
 
 ```c
 	/* TODO: reuse incoming transaction for reply */
-    // 构造一个 binder_transaction 结构体，用于后续假如到目标队列中
+    // 构造一个 binder_transaction 结构体，用于后续加入到目标队列中
 	t = kzalloc(sizeof(*t), GFP_KERNEL);
     //...
 
@@ -1092,5 +1092,116 @@ Service 组件注册到内部的 Service 组件列表 svclist 中之后，接着
 
 ## 启动线程池
 
+对于一个 Server 进程来说，在注册服务后，就要启动一个线程池来等待 Client 进程的的通信请求。
 
+```cpp
+// 启动一个Binder线程池
+ProcessState::self()->startThreadPool();
+// 将当前线程加入到前面所启动的Binder线程池中去等待和处理来自Client进程的进程间通信请求
+IPCThreadState::self()->joinThreadPool();
+```
+
+mThreadPoolStarted 用来防止重复初始化，而 spawnPooledThread 用来实现的真正初始化。
+
+```cpp
+void ProcessState::startThreadPool()
+{
+    AutoMutex _l(mLock);
+    if (!mThreadPoolStarted) {
+        mThreadPoolStarted = true;
+        spawnPooledThread(true);
+    }
+}
+
+/*
+* 前面传进来的参数isMain的值为true，表示线程t是进程主动创建来加入到它的Binder线程池的，
+* 以区别于Binder驱动程序请求进程创建新的线程来加入到它的Binder线程池的情况。
+*/
+
+void ProcessState::spawnPooledThread(bool isMain)
+{
+    if (mThreadPoolStarted) {
+        int32_t s = android_atomic_add(1, &mThreadPoolSeq);
+        char buf[32];
+        sprintf(buf, "Binder Thread #%d", s);
+        LOGV("Spawning new pooled thread, name=%s\n", buf);
+        // 创建线程池对象，并启动
+        sp<Thread> t = new PoolThread(isMain);
+        t->run(buf);
+    }
+}
+```
+
+PoolThread 继承自 Thread，并重写了 threadLoop 方法。threadLoop 算是这个线程的执行内容，即一个线程启动后，就会触发 threadLoop 的执行。
+
+```cpp
+class PoolThread : public Thread
+{
+public:
+    PoolThread(bool isMain)
+        : mIsMain(isMain)
+    {
+    }
+    
+protected:
+    virtual bool threadLoop()
+    {
+        IPCThreadState::self()->joinThreadPool(mIsMain);
+        return false;
+    }
+    
+    const bool mIsMain;
+};
+```
+
+joinThreadPool 的实现如下。
+
+```cpp
+void IPCThreadState::joinThreadPool(bool isMain)
+{
+    LOG_THREADPOOL("**** THREAD %p (PID %d) IS JOINING THE THREAD POOL\n", (void*)pthread_self(), getpid());
+
+    // 写入一个 binder 通信命令
+    mOut.writeInt32(isMain ? BC_ENTER_LOOPER : BC_REGISTER_LOOPER);
+    
+    //...
+        
+    status_t result;
+    do {
+        int32_t cmd;
+        
+        //...
+
+        // now get the next command to be processed, waiting if necessary
+        // 阻塞等到消息分发，需要注意的是进入阻塞前会先将 BC_ENTER_LOOPER 和 BC_REGISTER_LOOPER 一并发送到 binder 驱动。
+        result = talkWithDriver();
+        if (result >= NO_ERROR) {
+            size_t IN = mIn.dataAvail();
+            if (IN < sizeof(int32_t)) continue;
+            cmd = mIn.readInt32();
+            IF_LOG_COMMANDS() {
+                alog << "Processing top-level Command: "
+                    << getReturnString(cmd) << endl;
+            }
+
+            // 执行任务
+            result = executeCommand(cmd);
+        }
+        
+        //...
+
+        // Let this thread exit the thread pool if it is no longer
+        // needed and it is not the main process thread.
+        if(result == TIMED_OUT && !isMain) {
+            break;
+        }
+    } while (result != -ECONNREFUSED && result != -EBADF);
+
+    LOG_THREADPOOL("**** THREAD %p (PID %d) IS LEAVING THE THREAD POOL err=%p\n",
+        (void*)pthread_self(), getpid(), (void*)result);
+    // 告诉 binder 当前线程退出线程池。
+    mOut.writeInt32(BC_EXIT_LOOPER);
+    talkWithDriver(false);
+}
+```
 

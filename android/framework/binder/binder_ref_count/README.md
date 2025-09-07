@@ -5,7 +5,7 @@
 
 Binder 本地对象是一个 BBinder 的子类，在用户空间常见，并运行在 Server 进程中。Binder 本地对象一方面会被 Server 进程中其他对象引用，另一方面也会被 Binder 驱动中的 Binder 实体对象 binder_node 引用。
 
-对于 Server 进程中的对象可以使用 RefBase 只能指针来管理生命周期，但是 binder 驱动程序没法这样做，所以定义了一个新的规则来避免它们还在被 binder_node 引用时销毁的问题。
+对于 Server 进程中的对象可以使用 RefBase 智能指针来管理生命周期，但是 binder 驱动程序没法这样做，所以定义了一个新的规则来避免它们还在被 binder_node 引用时销毁的问题。
 
 Server 进程将一个 Binder 本地对象注册到 ServerManager 时，Binder 驱动程序就会为它创建一个 Binder 实体对象。接下来，当 Client 进程通过 Service Manager 来查询一个 Binder 本地对象的代理对象接口时，Binder 驱动程序就会为它所对应的 Binder 实体对象创建一个 Binder 引用对象， 接着再使用 `BR_INCREFS` 和 `BR_ACQUIRE` 协议来通知对应的 Server 进程增加对应的 Binder 本地对象的弱引用计数和强引用计数。这样就能保证 Client 进程中的 Binder 代理对象在引用一个 Binder本地对象期间，该 Binder 本地对象不会被销毁。
 
@@ -470,7 +470,7 @@ binder_delete_ref(struct binder_ref *ref)
 }
 ```
 
-假设有三个 Binder 引用对象引用了一个 Binder 实体对象，其中，有两个 Binder 引用对象的强引用计数等于 3，另外一个 Binder 引用对象的强引用计数等于 1。每当一个 Binder 引用对象的强引用计数由 0 变为 1 时，它都会增加对应的 Binder 实体对象的外部强引用计数i nternal_strong_refs。因此，Binder 实体对象的外部强引用计数 internal_strong_refs 等于 3，小于所有引用了它的 Binder 引用对象的强引用计数之和，即一个 Binder 引用对象的强引用计数与它所引用的 Binder 实体对象的外部强引用计数是多对一的关系。这样做的好处是可以减少执行修改 Binder 实体对象的引用计数的操作。
+假设有三个 Binder 引用对象引用了一个 Binder 实体对象，其中，有两个 Binder 引用对象的强引用计数等于 3，另外一个 Binder 引用对象的强引用计数等于 1。每当一个 Binder 引用对象的强引用计数由 0 变为 1 时，它都会增加对应的 Binder 实体对象的外部强引用计数 internal_strong_refs。因此，Binder 实体对象的外部强引用计数 internal_strong_refs 等于 3，小于所有引用了它的 Binder 引用对象的强引用计数之和，即一个 Binder 引用对象的强引用计数与它所引用的 Binder 实体对象的外部强引用计数是多对一的关系。这样做的好处是可以减少执行修改 Binder 实体对象的引用计数的操作。
 
 <img src="android/framework/binder/binder_ref_count/resources/1.png" style="width:50%">
 
