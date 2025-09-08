@@ -1095,7 +1095,7 @@ Service 组件注册到内部的 Service 组件列表 svclist 中之后，接着
 对于一个 Server 进程来说，在注册服务后，就要启动一个线程池来等待 Client 进程的的通信请求。
 
 ```cpp
-// 启动一个Binder线程池
+// 启动一个Binder线程池，这个会创建一个线程加入到线程池。
 ProcessState::self()->startThreadPool();
 // 将当前线程加入到前面所启动的Binder线程池中去等待和处理来自Client进程的进程间通信请求
 IPCThreadState::self()->joinThreadPool();
@@ -1205,3 +1205,190 @@ void IPCThreadState::joinThreadPool(bool isMain)
 }
 ```
 
+## Service 代理对象的获取过程
+
+> <img src="android/framework/binder/service_manager/resources/3.png" style="width:100%">
+
+```cpp
+class BpServiceManager : public BpInterface<IServiceManager>
+{
+public:
+    BpServiceManager(const sp<IBinder>& impl)
+        : BpInterface<IServiceManager>(impl)
+    {
+    }
+
+    virtual sp<IBinder> getService(const String16& name) const
+    {
+        unsigned n;
+        for (n = 0; n < 5; n++){
+            sp<IBinder> svc = checkService(name);
+            if (svc != NULL) return svc;
+            LOGI("Waiting for service %s...\n", String8(name).string());
+            sleep(1);
+        }
+        return NULL;
+    }
+
+    virtual sp<IBinder> checkService( const String16& name) const
+    {
+        Parcel data, reply;
+        data.writeInterfaceToken(IServiceManager::getInterfaceDescriptor());
+        data.writeString16(name);
+        remote()->transact(CHECK_SERVICE_TRANSACTION, data, &reply);
+        return reply.readStrongBinder();
+    }
+    //...
+};
+```
+
+这里我们再一次复习一下 client 与 service-manager 通信的过程。
+
+1. FregClient 进程将进程间通信数据，即要获得其代理对象的 Service 组件 FregService 的名称，封装在一个 Parcel 对象中，用来传递给Binder驱动程序。
+2. FregClient 进程向 Binder 驱动程序发送一个 BC_TRANSACTION 命令协议，Binder 驱动程序根据协议内容找到 Service Manager 进程之后，就会 向FregClient 进程发送一个 BR_TRANSACTION_COMPLETE 返回协议，表示它的进程间通信请求已经被接受。FregClient 进程接收到 Binder 驱动程序发送给它的 BR_TRANSACTION_COMPLETE 返回协议，并且对它进行处理之后，就会再次进入到 Binder 驱动程序中去等待 ServiceManager 进程将它要获取的 Binder 代理对象的句柄值返回来。
+3. Binder 驱动程序在向 FregClient 进程发送 BR_TRANSACTION_COMPLETE 返回协议的同时，也会向 ServiceManager 进程发送一个 BR_TRANSACTION 返回协议，请求 ServiceManager 进程执行一个 CHECK_SERVICE_TRANSACTION 操作。
+4. Service Manager 进程执行完成 FregClient 进程请求的 CHECK_SERVICE_TRANSACTION 操作之后，就会向 Binder 驱动程序发送一个 BC_REPLY 命令协议，协议内容包含了 Service 组件 FregService 的信息。Binder 驱动程序根据协议内容中的 Service 组件 FregService 的信息为 FregClient 进程创建一个 Binder 引用对象，接着就会向 ServiceManager 进程发送一个 BR_TRANSACTION_COMPLETE 返回协议，表示它返回的 Service 组件 FregService 的信息已经收到了。Service Manager 进程接收到 Binder 驱动程序发送给它的 BR_TRANSACTION_COMPLETE 返回协议，并且对它进行处理之后，一次进程间通信过程就结束了，接着它会再次进入到 Binder 驱动程序中去等待下一次进程间通信请求。
+5. Binder 驱动程序在向 Service Manager 进程发送 BR_TRANSACTION_COMPLETE 返回协议的同时，也向 FregClient 进程发送一个 BR_REPLY 返回协议，协议内容包含了前面所创建的一个 Binder 引用对象的句柄值，这时候 FregClient 进程就可以通过这个句柄来创建一个 Binder 代理对象。
+
+对于 getService 过程我们主要集中在下面三个步骤。
+
+1. Service Manager 进程处理操作代码为 CHECK_SERVICE_TRANSACTION 的进程间通信请求的过程。
+2. Binder 驱动程序为 FregClient 进程创建一个引用了 Service 组件 FregService 的 Binder 引用对象的过程。
+3. Binder 库为 FregClient 进程创建一个 Binder 代理对象的过程。
+
+### ServiceManager 处理 CHECK_SERVICE_TRANSACTION
+
+```cpp
+switch(txn->code) {
+case SVC_MGR_GET_SERVICE:
+case SVC_MGR_CHECK_SERVICE:
+    s = bio_get_string16(msg, &len);
+    ptr = do_find_service(bs, s, len);
+    if (!ptr)
+        break;
+    // 写入返回数据
+    bio_put_ref(reply, ptr);
+    return 0;
+//...
+}
+
+// 遍历已注册 Service 组件列表 svclist 来查找与字符串 s 对应的一个 svcinfo 结构体
+void *do_find_service(struct binder_state *bs, uint16_t *s, unsigned len)
+{
+    struct svcinfo *si;
+    si = find_svc(s, len);
+    if (si && si->ptr) {
+        return si->ptr;
+    } else {
+        return 0;
+    }
+}
+```
+
+### 创建一个引用了 Service 组件 Binder 引用对象的过程
+
+SM 将 handle 作为数据包装成一个 BC_REPLAY 发送给 binder 驱动。
+
+binder 驱动收到这个消息后，从中去除 handle，并在 SM 的 binder_proc 下通过 handle 找到对应的 binder_ref。
+
+```cpp
+case BINDER_TYPE_HANDLE:
+case BINDER_TYPE_WEAK_HANDLE: {
+    struct binder_ref *ref = binder_get_ref(proc, fp->handle);
+    if (ref == NULL) {
+        binder_user_error("binder: %d:%d got "
+            "transaction with invalid "
+            "handle, %ld\n", proc->pid,
+            thread->pid, fp->handle);
+        return_error = BR_FAILED_REPLY;
+        goto err_binder_get_ref_failed;
+    }
+    // 判断这个引用的节点所属进程是不是就是目标进程，具体点说就是判断这个服务是不是就是 client 本身提供的。
+    if (ref->node->proc == target_proc) {
+        if (fp->type == BINDER_TYPE_HANDLE)     // 是的话，修改 binder 类型为 BINDER_TYPE_BINDER，本地对象
+            fp->type = BINDER_TYPE_BINDER;
+        else
+            fp->type = BINDER_TYPE_WEAK_BINDER;
+        fp->binder = ref->node->ptr;    // 返回本地对象引用计数的地址
+        fp->cookie = ref->node->cookie; // 返回本地对象的地址
+        binder_inc_node(ref->node, fp->type == BINDER_TYPE_BINDER, 0, NULL);
+        if (binder_debug_mask & BINDER_DEBUG_TRANSACTION)
+            printk(KERN_INFO "        ref %d desc %d -> node %d u%p\n",
+                    ref->debug_id, ref->desc, ref->node->debug_id, ref->node->ptr);
+    } else {
+        struct binder_ref *new_ref;
+        new_ref = binder_get_ref_for_node(target_proc, ref->node);
+        if (new_ref == NULL) {
+            return_error = BR_FAILED_REPLY;
+            goto err_binder_get_ref_for_node_failed;
+        }
+        fp->handle = new_ref->desc;
+        binder_inc_ref(new_ref, fp->type == BINDER_TYPE_HANDLE, NULL);
+        if (binder_debug_mask & BINDER_DEBUG_TRANSACTION)
+            printk(KERN_INFO "        ref %d desc %d -> ref %d desc %d (node %d)\n",
+                    ref->debug_id, ref->desc, new_ref->debug_id, new_ref->desc, ref->node->debug_id);
+    }
+} break;
+
+```
+
+### Binder 库为 FregClient 进程创建一个 Binder 代理对象的过程
+
+binder 库收到这个返回的数据后，会依据 binder 对象的类型进行转换，如果是 BINDER_TYPE_BINDER，直接返回 binder 本地对象。如果是 BINDER_TYPE_HANDLE 返回一个 binder 代理对象。
+
+```cpp
+status_t unflatten_binder(const sp<ProcessState>& proc,
+    const Parcel& in, sp<IBinder>* out)
+{
+    const flat_binder_object* flat = in.readObject(false);
+    
+    if (flat) {
+        switch (flat->type) {
+            case BINDER_TYPE_BINDER:
+                *out = static_cast<IBinder*>(flat->cookie);
+                return finish_unflatten_binder(NULL, *flat, in);
+            case BINDER_TYPE_HANDLE:
+                *out = proc->getStrongProxyForHandle(flat->handle);
+                return finish_unflatten_binder(
+                    static_cast<BpBinder*>(out->get()), *flat, in);
+        }        
+    }
+    return BAD_TYPE;
+}
+```
+
+因为 BBinder 和 BpBinder 都继承自 IBinder 对象，后续用户调用其 asInterface 获取到真正的 BnInterface 和 BpInterface.
+
+```cpp
+android::sp<I##INTERFACE> I##INTERFACE::asInterface(                \
+            const android::sp<android::IBinder>& obj)                   \
+    {                                                                   \
+        android::sp<I##INTERFACE> intr;                                 \
+        if (obj != NULL) {                                              \
+            intr = static_cast<I##INTERFACE*>(                          \
+                obj->queryLocalInterface(                               \
+                        I##INTERFACE::descriptor).get());               \
+            if (intr == NULL) {                                         \\ 如果是 null，就代表是 代理对象返回对应的 Bp，否则就是本地对象，直接返回。
+                intr = new Bp##INTERFACE(obj);                          \
+            }                                                           \
+        }                                                               \
+        return intr;                                                    \
+    }   
+```
+
+这一步，可以看到 IBinder 这个接口默认返回的 NULL，而 BnInterface 重写了这个接口，返回了具体的值。
+
+```cpp
+sp<IInterface>  IBinder::queryLocalInterface(const String16& descriptor)
+{
+    return NULL;
+}
+
+template<typename INTERFACE>
+inline sp<IInterface> BnInterface<INTERFACE>::queryLocalInterface(
+        const String16& _descriptor)
+{
+    if (_descriptor == INTERFACE::descriptor) return this;
+    return NULL;
+}
+```
