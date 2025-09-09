@@ -278,7 +278,7 @@ public interface MyModule extends android.os.IInterface
     // Java 本地的代理对象，类似于 c++ 中的 BpXXXX
     private static class Proxy implements android.os.MyModule
     {
-      private android.os.IBinder mRemote; // 这个可能是一个 BinderProxy 或者 MyModule 实例
+      private android.os.IBinder mRemote; // 这个只能是一个 BinderProxy
       Proxy(android.os.IBinder remote)
       {
         mRemote = remote;
@@ -337,6 +337,100 @@ public interface MyModule extends android.os.IInterface
 
 ## Java 服务的启动和注册
 
+### Java 服务的初始化
 
+这个初始化的意思就是我们继承自 XXX.Stub 的类被构造时做的事情。
+
+因为 XXX.Stub 继承自 `android.os.Binder`, 其会在 new 的时候调用到 `Binder` 的构造函数。这个构造方法中，会触发一个 native 方法 init。
+
+```java
+public Binder() {
+    init();
+
+    if (FIND_POTENTIAL_LEAKS) {
+        final Class<? extends Binder> klass = getClass();
+        if ((klass.isAnonymousClass() || klass.isMemberClass() || klass.isLocalClass()) &&
+                (klass.getModifiers() & Modifier.STATIC) == 0) {
+            Log.w(TAG, "The following Binder class should be static or leaks might occur: " +
+                klass.getCanonicalName());
+        }
+    }
+}
+
+private native final void init();
+```
+
+在 c++ 中对应的逻辑 参数 clazz 指向的是前面在 Java 层中创建的硬件访问服务，以它为参数在C++层中创建了一个 JavaBBinderHolder 对象 jbh，接着增加了 JavaBBinderHolder 对象 jbh 的强引用计数，因为它被 Java 层中的硬件访问服务引用了。最后将 JavaBBinderHolder 对象 jbh 的地址值保存在硬件访问服务的父类 Binder 的成员变量 mObject 中。这样，运行在Java层中的硬件访问服务就可以通过它的成员变量 mObject 来访问运行在 C++ 层中的 JavaBBinderHolder 对象 jbh 了。
+
+```cpp
+static void android_os_Binder_init(JNIEnv* env, jobject clazz)
+{
+    JavaBBinderHolder* jbh = new JavaBBinderHolder(env, clazz);
+    if (jbh == NULL) {
+        jniThrowException(env, "java/lang/OutOfMemoryError", NULL);
+        return;
+    }
+    LOGV("Java Binder %p: acquiring first ref on holder %p", clazz, jbh);
+    jbh->incStrong(clazz);
+    env->SetIntField(clazz, gBinderOffsets.mObject, (int)jbh);
+}
+```
+
+这里 JavaBBinderHolder 是一个容器，其中存储着来自于 Java 的服务对应的 JObject 以及一个 c++ 对应的 JavaBBinder 对象。
+
+```c++
+class JavaBBinderHolder : public RefBase
+{
+public:
+    JavaBBinderHolder(JNIEnv* env, jobject object)
+        : mObject(object)
+    {
+        LOGV("Creating JavaBBinderHolder for Object %p\n", object);
+    }
+    ~JavaBBinderHolder()
+    {
+        LOGV("Destroying JavaBBinderHolder for Object %p\n", mObject);
+    }
+
+    sp<JavaBBinder> get(JNIEnv* env)
+    {
+        AutoMutex _l(mLock);
+        sp<JavaBBinder> b = mBinder.promote();
+        if (b == NULL) {
+            b = new JavaBBinder(env, mObject);
+            mBinder = b;
+            LOGV("Creating JavaBinder %p (refs %p) for Object %p, weakCount=%d\n",
+                 b.get(), b->getWeakRefs(), mObject, b->getWeakRefs()->getWeakCount());
+        }
+
+        return b;
+    }
+
+    sp<JavaBBinder> getExisting()
+    {
+        AutoMutex _l(mLock);
+        return mBinder.promote();
+    }
+
+private:
+    Mutex           mLock;
+    jobject         mObject;
+    wp<JavaBBinder> mBinder;
+};
+```
+
+初始化完成后，就调用 `ServiceManager` 的 `addService` 方法将刚才的服务进行注册。
+
+```java
+public static void addService(String name, IBinder service) {
+    try {
+        getIServiceManager().addService(name, service);
+    } catch (RemoteException e) {
+        Log.e(TAG, "error in addService", e);
+    }
+}
+```
+
+回想一下，之前我们 `getIServiceManager` 方法返回的是 `ServiceManagerProxy`，其中持有一个 `BinderProxy` 对象。
 
 
