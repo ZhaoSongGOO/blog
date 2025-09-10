@@ -431,6 +431,146 @@ public static void addService(String name, IBinder service) {
 }
 ```
 
-回想一下，之前我们 `getIServiceManager` 方法返回的是 `ServiceManagerProxy`，其中持有一个 `BinderProxy` 对象。
+回想一下，之前我们 `getIServiceManager` 方法返回的是 `ServiceManagerProxy`，其中持有一个 `BinderProxy` 对象。所以我们先去 `ServiceManagerProxy` 中查看对应的方法。
+
+```java
+public void addService(String name, IBinder service)
+        throws RemoteException {
+    Parcel data = Parcel.obtain();
+    Parcel reply = Parcel.obtain();
+    data.writeInterfaceToken(IServiceManager.descriptor);
+    data.writeString(name);
+    data.writeStrongBinder(service);
+    mRemote.transact(ADD_SERVICE_TRANSACTION, data, reply, 0);
+    reply.recycle();
+    data.recycle();
+}
+```
+
+类似于 C++ 层中的 Parcel 类，Java 层中的 Parcel 类也是用来封装进程间通信数据的。Java 层中的每一个 Parcel 对象在 C++ 层中都有一个对应的 Parcel 对象，后者的地址值就保存在前者的成员变量 mObject 中。当我们将进程间通信数据封装在一个 Java 层中的 Parcel 对象时，这个 Java 层中的 Parcel 对象就会通过其成员变量 mObject 找到与它对应的运行在 C++ 层中的 Parcel 对象，并且将这些进程间通信数据封装到 C++ 层中的 Parcel 对象里面去。
+
+我们着重看一下 `Parcel` 的 `writeStrongBinder` 方法，这个方法依旧是一个 native 的方法。
+
+```java
+public final native void writeStrongBinder(IBinder val);
+
+// native 方法
+static void android_os_Parcel_writeStrongBinder(JNIEnv* env, jobject clazz, jobject object)
+{
+    Parcel* parcel = parcelForJavaObject(env, clazz);
+    if (parcel != NULL) {
+        const status_t err = parcel->writeStrongBinder(ibinderForJavaObject(env, object));
+        if (err != NO_ERROR) {
+            jniThrowException(env, "java/lang/OutOfMemoryError", NULL);
+        }
+    }
+}
+```
+
+这个 `writeStrongBinder` 方法接收的参数是一个 c++ 的 IBinder 对象。所以 ibinderForJavaObject 就是来将一个 java 的 IBinder 对象转换成 c++ 的 IBinder 对象，在这个场景下就是继承自 java IBinder 的服务对象转换成 c++ JavaBBinder 对象。
+
+
+```cpp
+sp<IBinder> ibinderForJavaObject(JNIEnv* env, jobject obj)
+{
+    if (obj == NULL) return NULL;
+
+    // 如果是一个来自于 Java 层的 Binder 实体对象
+    if (env->IsInstanceOf(obj, gBinderOffsets.mClass)) {
+        // 获取 JavaBBinderHolder 对象
+        JavaBBinderHolder* jbh = (JavaBBinderHolder*)
+            env->GetIntField(obj, gBinderOffsets.mObject);
+        // get 返回其中的 JavaBinder 对象
+        return jbh != NULL ? jbh->get(env) : NULL;
+    }
+
+    // 如果是一个来自于 Java 层的 BinderProxy 对象
+    if (env->IsInstanceOf(obj, gBinderProxyOffsets.mClass)) {
+        // 获取其中的 mObject 成员，这个是一个 c++ 的 IBinder 对象，可能是一个 BBinder 也可能是 BpBinder.
+        return (IBinder*)
+            env->GetIntField(obj, gBinderProxyOffsets.mObject);
+    }
+
+    LOGW("ibinderForJavaObject: %p is not a Binder object", obj);
+    return NULL;
+}
+```
+
+至此，我们完成了 Parcel 数据的写入，然后继续返回，我们看 `mRemote.transact(ADD_SERVICE_TRANSACTION, data, reply, 0)`。
+
+之前提到了这个 `mRemote` 就是 `BinderProxy` 对象，它的 transact 方法是一个 jni 方法。从中可以看出，这里面最终注册的是这个 c++ 的 binder 实体对象，具体来说是 JavaBinder，而非 Java 层的服务实体。
+
+```java
+public native boolean transact(int code, Parcel data, Parcel reply,
+            int flags) throws RemoteException;
+
+// 对应的 c++ 方法
+// params: c++ -> java
+// obj -> BinderProxy 对象
+// code -> code
+// dataObj -> data
+// replyObj -> reply
+// flags -> flags
+static jboolean android_os_BinderProxy_transact(JNIEnv* env, jobject obj,
+                                                jint code, jobject dataObj,
+                                                jobject replyObj, jint flags)
+{
+    if (dataObj == NULL) {
+        jniThrowException(env, "java/lang/NullPointerException", NULL);
+        return JNI_FALSE;
+    }
+
+    Parcel* data = parcelForJavaObject(env, dataObj);
+    if (data == NULL) {
+        return JNI_FALSE;
+    }
+    Parcel* reply = parcelForJavaObject(env, replyObj);
+    if (reply == NULL && replyObj != NULL) {
+        return JNI_FALSE;
+    }
+    // BinderProxy 中的 mObject 存储的是一个 c++ IBinder 对象的指针
+    IBinder* target = (IBinder*)
+        env->GetIntField(obj, gBinderProxyOffsets.mObject);
+    if (target == NULL) {
+        jniThrowException(env, "java/lang/IllegalStateException", "Binder has been finalized!");
+        return JNI_FALSE;
+    }
+
+    LOGV("Java code calling transact on %p in Java object %p with code %d\n",
+            target, obj, code);
+
+    // Only log the binder call duration for things on the Java-level main thread.
+    // But if we don't
+    const bool time_binder_calls = should_time_binder_calls();
+
+    int64_t start_millis;
+    if (time_binder_calls) {
+        start_millis = uptimeMillis();
+    }
+    //printf("Transact from Java code to %p sending: ", target); data->print();
+    // 发送消息。
+    status_t err = target->transact(code, *data, reply, flags);
+    //if (reply) printf("Transact from Java code to %p received: ", target); reply->print();
+    if (time_binder_calls) {
+        conditionally_log_binder_call(start_millis, target, code);
+    }
+
+    if (err == NO_ERROR) {
+        return JNI_TRUE;
+    } else if (err == UNKNOWN_TRANSACTION) {
+        return JNI_FALSE;
+    }
+
+    signalExceptionForError(env, obj, err);
+    return JNI_FALSE;
+}
+```
+
+## Java 服务代理对象的获取
+
+
+
+
+
 
 
