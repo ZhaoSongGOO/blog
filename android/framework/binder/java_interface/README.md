@@ -568,9 +568,136 @@ static jboolean android_os_BinderProxy_transact(JNIEnv* env, jobject obj,
 
 ## Java 服务代理对象的获取
 
+将一个 Java 服务注册后，应用程序就可以使用 `ServiceManager.getService` 就可以获取对应的系统服务了。
 
+```java
+// public static android.os.MyModule asInterface(android.os.IBinder obj)
+// {
+//   if ((obj==null)) {
+//     return null;
+//   }
+//   android.os.IInterface iin = obj.queryLocalInterface(DESCRIPTOR);
+//   if (((iin!=null)&&(iin instanceof android.os.MyModule))) {
+//     return ((android.os.MyModule)iin);
+//   }
+//   return new android.os.MyModule.Stub.Proxy(obj);
+// }
 
+MyModule module = MyModule.Stub.asInterface(ServiceManager.getService("xxxx"));
+```
 
+首先我们来看 `getService` 方法，其代码如下。首先 `getIServiceManager` 获取到 `ServiceManagerProxy` 对象，随后调用其 `getService` 方法。 这个 `getService` 方法里面的 `mRemote` 是一个 `BinderProxy` 对象。其 `transact` 方法是一个 native 的方法，和之前 `addService` 一样的 c++ 逻辑。
 
+```java
+// ServiceManager.java
+public static IBinder getService(String name) {
+    try {
+        IBinder service = sCache.get(name);
+        if (service != null) {
+            return service;
+        } else {
+            return getIServiceManager().getService(name);
+        }
+    } catch (RemoteException e) {
+        Log.e(TAG, "error in getService", e);
+    }
+    return null;
+}
 
+// ServiceManagerNative.SeviceManagerProxy.java
+
+public IBinder getService(String name) throws RemoteException {
+    Parcel data = Parcel.obtain();
+    Parcel reply = Parcel.obtain();
+    data.writeInterfaceToken(IServiceManager.descriptor);
+    data.writeString(name);
+    mRemote.transact(GET_SERVICE_TRANSACTION, data, reply, 0);
+    IBinder binder = reply.readStrongBinder();
+    reply.recycle();
+    data.recycle();
+    return binder;
+}
+```
+
+随后我们使用 `reply.readStrongBinder()` 拿出来返回的 binder 对象。这个方法也是一个 jni 方法，具体实现如下。可以看到就是直接调用了之前提到的 `javaObjectForIBinder` 对象。这个方法会返回两种不同类型的 jobject。
+
+1. 如果这个服务是当前进程注册的 Java 服务，就返回对应的服务对象。
+2. 否则返回 BinderProxy 对象。(无论是非本进程的服务 或者同进程的非 java 服务)。
+
+```cpp
+static jobject android_os_Parcel_readStrongBinder(JNIEnv* env, jobject clazz)
+{
+    Parcel* parcel = parcelForJavaObject(env, clazz);
+    if (parcel != NULL) {
+        return javaObjectForIBinder(env, parcel->readStrongBinder());
+    }
+    return NULL;
+}
+```
+
+## Java 服务的调用过程
+
+前面我们已经知道一个 Java 的服务对应到 c++ 中是一个 JavaBinder 对象，这个对象中持有了原始的 Java 层服务的 jobject。对于一个 IBinder 类型的对象，收到远程调用后，会触发自己的 `onTransact` 方法，这个方法会触发 Java 层对象，也就是 Binder 对象的 `ExecTransact` 方法。
+
+```cpp
+class JavaBBinder : public BBinder
+{
+public:
+    JavaBBinder(JNIEnv* env, jobject object)
+        : mVM(jnienv_to_javavm(env)), mObject(env->NewGlobalRef(object))
+    {
+        LOGV("Creating JavaBBinder %p\n", this);
+        android_atomic_inc(&gNumLocalRefs);
+        incRefsCreated(env);
+    }
+//...
+
+    virtual status_t onTransact(
+        uint32_t code, const Parcel& data, Parcel* reply, uint32_t flags = 0)
+    {
+        JNIEnv* env = javavm_to_jnienv(mVM);
+
+        //...
+        jboolean res = env->CallBooleanMethod(mObject, gBinderOffsets.mExecTransact,
+            code, (int32_t)&data, (int32_t)reply, flags);
+        //...
+        return res != JNI_FALSE ? NO_ERROR : UNKNOWN_TRANSACTION;
+    }
+
+    virtual status_t dump(int fd, const Vector<String16>& args)
+    {
+        return 0;
+    }
+
+private:
+    JavaVM* const   mVM;
+    jobject const   mObject;
+};
+```
+
+`execTransact` 方法会触发 `onTransact` 方法回调，这个方法就是我们自己定义的服务中重写的方法。
+
+```java
+private boolean execTransact(int code, int dataObj, int replyObj,
+        int flags) {
+    Parcel data = Parcel.obtain(dataObj);
+    Parcel reply = Parcel.obtain(replyObj);
+    // theoretically, we should call transact, which will call onTransact,
+    // but all that does is rewind it, and we just got these from an IPC,
+    // so we'll just call it directly.
+    boolean res;
+    try {
+        res = onTransact(code, data, reply, flags);
+    } catch (RemoteException e) {
+        reply.writeException(e);
+        res = true;
+    } catch (RuntimeException e) {
+        reply.writeException(e);
+        res = true;
+    }
+    reply.recycle();
+    data.recycle();
+    return res;
+}
+```
 
