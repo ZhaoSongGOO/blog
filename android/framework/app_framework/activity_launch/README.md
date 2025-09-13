@@ -190,3 +190,329 @@ public final int startActivity(IApplicationThread caller,
 
 ### Step7: mMainStack.startActivityMayWait
 
+```java
+final int startActivityMayWait(IApplicationThread caller,
+        Intent intent, String resolvedType, Uri[] grantedUriPermissions,
+        int grantedMode, IBinder resultTo,
+        String resultWho, int requestCode, boolean onlyIfNeeded,
+        boolean debug, WaitResult outResult, Configuration config) {
+        //...
+        // Don't modify the client's object!
+        intent = new Intent(intent);
+
+        // Collect information about the target of the Intent. 使用 PMS 搜集应用程序的信息
+        ActivityInfo aInfo;
+        try {
+            ResolveInfo rInfo =
+                AppGlobals.getPackageManager().resolveIntent(
+                        intent, resolvedType,
+                        PackageManager.MATCH_DEFAULT_ONLY
+                        | ActivityManagerService.STOCK_PM_FLAGS);
+            aInfo = rInfo != null ? rInfo.activityInfo : null;
+        } catch (RemoteException e) {
+            aInfo = null;
+        }
+        synchronized (mService) {
+        //...
+        // 调用成员函数startActivityLocked来继续执行启动Activity组件的工作
+        int res = startActivityLocked(caller, intent, resolvedType,
+                grantedUriPermissions, grantedMode, aInfo,
+                resultTo, resultWho, requestCode, callingPid, callingUid,
+                onlyIfNeeded, componentSpecified);
+        //...
+        return res;
+        }
+}
+```
+
+### Step8: int ActivityStack.startActivityLocked
+
+在 AMS 中，每一个应用进程都使用一个 ProcessRecord 对象来描述，并且保存在 AMS 内部 (mLruProcesses)。
+
+ActivityStack 的 mService 就是 AMS，这里先试用 AMS 的 getRecordForAppLocked 来获取 launcher 程序的 ProcessRecord。
+
+随后从 mHistory (ArrayList) 中拿到对应的 ActivityRecord 组件。
+
+通过这些信息对即将启动的 Activity 创建一个 ActivityRecord 组件，并进一步调用 startActivityUncheckedLocked。
+
+```java
+final int startActivityLocked(IApplicationThread caller,
+            Intent intent, String resolvedType,
+            Uri[] grantedUriPermissions,
+            int grantedMode, ActivityInfo aInfo, IBinder resultTo,
+            String resultWho, int requestCode,
+            int callingPid, int callingUid, boolean onlyIfNeeded,
+            boolean componentSpecified) {
+
+        int err = START_SUCCESS;
+
+        ProcessRecord callerApp = null;
+        if (caller != null) {
+            callerApp = mService.getRecordForAppLocked(caller);
+            if (callerApp != null) {
+                callingPid = callerApp.pid;
+                callingUid = callerApp.info.uid;
+            } else {
+                Slog.w(TAG, "Unable to find app for caller " + caller
+                      + " (pid=" + callingPid + ") when starting: "
+                      + intent.toString());
+                err = START_PERMISSION_DENIED;
+            }
+        }
+
+        if (err == START_SUCCESS) {
+            Slog.i(TAG, "Starting: " + intent + " from pid "
+                    + (callerApp != null ? callerApp.pid : callingPid));
+        }
+
+        ActivityRecord sourceRecord = null;
+        ActivityRecord resultRecord = null;
+        if (resultTo != null) {
+            int index = indexOfTokenLocked(resultTo);
+            if (DEBUG_RESULTS) Slog.v(
+                TAG, "Sending result to " + resultTo + " (index " + index + ")");
+            if (index >= 0) {
+                sourceRecord = (ActivityRecord)mHistory.get(index);
+                // 因为源 activity 不关心返回结果 (requestCode <0)，所以 resultRecord 为 null。
+                if (requestCode >= 0 && !sourceRecord.finishing) {
+                    resultRecord = sourceRecord;
+                }
+            }
+        }
+
+        //...
+        // 创建一个 ActivityRecord 组件描述即将创建的 Activity。
+        ActivityRecord r = new ActivityRecord(mService, this, callerApp, callingUid,
+                intent, resolvedType, aInfo, mService.mConfiguration,
+                resultRecord, resultWho, requestCode, componentSpecified);
+
+        //...
+        
+        return startActivityUncheckedLocked(r, sourceRecord,
+                grantedUriPermissions, grantedMode, onlyIfNeeded, true);
+    }
+```
+
+### Step9:ActivityStack.startActivityUncheckedLocked
+
+1. 首先通过 intent.getFlags 拿到 activity 的启动标志位，从前面的Step 1可以知道，在变量 launchFlags 中，只有 Intent.FLAG_ACTIVITY_NEW_TASK 位被设置为1，其他位均等于0。
+2. 检查变量 launchFlags 的 Intent.FLAG_ACTIVITY_NO_USER_ACTION 位是否等于 1。如果等于 1，那么就表示目标 Activity 组件不是由用户手动启动的。如果目标 Activity 组件是由用户手动启动的，那么用来启动它的源 Activity 组件就会获得一个用户离开事件通知。由于目标 Activity 组件是用户在应用程序启动器的界面上点击启动的，即变量 launchFlags 的 Intent.FLAG_ACTIVITY_NO_USER_ACTION 位等于 0；因此，成员变量 mUserLeaving 的值就等于 true，表示后面要向源 Activity 组件发送一个用户离开事件通知。
+3. addingToTask, 标志这个 Activity 所处的任务是不是已经创建。
+4. 随后创建一个新的 TaskRecord, 并交给 AMS 来管理。
+5. 随后调用另外一个 startActivityLocked 来进行后续操作。
+
+```java
+ final int startActivityUncheckedLocked(ActivityRecord r,
+            ActivityRecord sourceRecord, Uri[] grantedUriPermissions,
+            int grantedMode, boolean onlyIfNeeded, boolean doResume) {
+        final Intent intent = r.intent;
+        final int callingUid = r.launchedFromUid;
+
+        // 1. 检查启动标志位
+        int launchFlags = intent.getFlags();
+        
+        // We'll invoke onUserLeaving before onPause only if the launching
+        // activity did not explicitly state that this is an automated launch.
+        // 2. 判断是不是用户操作导致的离开源 activity。
+        mUserLeaving = (launchFlags&Intent.FLAG_ACTIVITY_NO_USER_ACTION) == 0;
+        
+        //...
+
+        //3. 先设置成 false，后续还会 AMS 会检测是不是创建了，但是在我们的场景下，没有创建，这个值一直都是 false。
+        boolean addingToTask = false;
+
+        //...
+
+        boolean newTask = false;
+
+        // Should this be considered a new task?
+        if (r.resultTo == null && !addingToTask
+                && (launchFlags&Intent.FLAG_ACTIVITY_NEW_TASK) != 0) {
+            // todo: should do better management of integers.
+            mService.mCurTask++;
+            if (mService.mCurTask <= 0) {
+                mService.mCurTask = 1;
+            }
+            // 创建一个新任务
+            r.task = new TaskRecord(mService.mCurTask, r.info, intent,
+                    (r.info.flags&ActivityInfo.FLAG_CLEAR_TASK_ON_LAUNCH) != 0);
+            if (DEBUG_TASKS) Slog.v(TAG, "Starting new activity " + r
+                    + " in new task " + r.task);
+            newTask = true;
+            if (mMainStack) {
+                // 由 AMS 来管理 Task
+                mService.addRecentTaskLocked(r.task);
+            }
+            
+        } else if (sourceRecord != null) {
+            //...
+        } 
+        //...
+        startActivityLocked(r, newTask, doResume);
+        return START_SUCCESS;
+    }
+```
+
+在这个 startActivityLocked 函数中执行了下面的两件事：
+
+1. 当目标 Activity 组件是在一个新创建的任务中启动时，即参数 newTask 的值等于true时，ActivityStack 就需要将它放在 Activity 组件堆栈的最上面，即将变量 addPos 的值设置为 Activity 组件堆栈的当前大小 NH，以便接下来可以将它激活。
+2. 调用成员函数 resumeTopActivityLocked 将 Activity 组件堆栈顶端的 Activity 组件激活，这个 Activity 组件就正好是即将要启动的 MainActivity 组件。
+
+```java
+    private final void startActivityLocked(ActivityRecord r, boolean newTask,
+            boolean doResume) {
+        final int NH = mHistory.size();
+
+        int addPos = -1;
+        
+        //...
+        if(!newTask){
+            //...
+        }
+
+        // Place a new activity at top of stack, so it is next to interact
+        // with the user.
+        if (addPos < 0) {
+            addPos = NH;
+        }
+        
+        //...
+        
+        // Slot the activity into the history stack and proceed
+        mHistory.add(addPos, r);
+        //...
+
+        if (doResume) {
+            resumeTopActivityLocked(null);
+        }
+    }
+```
+
+### Step10. ActivityStack.resumeTopActivityLocked
+
+1. 调用成员函数 topRunningActivityLocked 来获得当前 Activity 组件堆栈最上面的一个不是处于结束状态的 Activity 组件, 即 MainActivity.
+2. ActivityStack 类有三个成员变量 mResumedActivity、mLastPausedActivity 和 mPausingActivity，它们的类型均为 ActivityRecord，分别用来描述系统当前激活的 Activity 组件、上一次被中止的 Activity 组件，以及正在被中止的 Activity 组件。这个场景下，mResumedActivity 就是 Launcher 组件的 Activity。
+
+
+```java
+ final boolean resumeTopActivityLocked(ActivityRecord prev) {
+        // Find the first activity that is not finishing.
+        ActivityRecord next = topRunningActivityLocked(null);
+
+        // Remember how we'll process this pause/resume situation, and ensure
+        // that the state is reset however we wind up proceeding.
+        final boolean userLeaving = mUserLeaving;
+        mUserLeaving = false;
+
+        //...
+        
+        // If the top activity is the resumed one, nothing to do.
+        // 检查即将要启动的 Activity 组件 next 是否等于当前被激活的 Activity 组件。如果等于，并且它的状态为 Resumed，那么就可以直接返回了，因为要启动的 Activity 组件本身就已经启动和激活了。
+        if (mResumedActivity == next && next.state == ActivityState.RESUMED) {
+            // Make sure we have executed any pending transitions, since there
+            // should be nothing left to do at this point.
+            mService.mWindowManager.executeAppTransition();
+            mNoAnimActivities.clear();
+            return false;
+        }
+
+        // If we are sleeping, and there is no resumed activity, and the top
+        // activity is paused, well that is the state we want.
+        // 检查即将要启动的 Activity 组件 next 是否等于上一次被中止了的 Activity 组件。如果等于，并且这时候系统正要进入关机或者睡眠状态，那么也可以直接返回了，因为这时候将这个 Activity 组件启动起来是没有意义的。
+        if ((mService.mSleeping || mService.mShuttingDown)
+                && mLastPausedActivity == next && next.state == ActivityState.PAUSED) {
+            // Make sure we have executed any pending transitions, since there
+            // should be nothing left to do at this point.
+            mService.mWindowManager.executeAppTransition();
+            mNoAnimActivities.clear();
+            return false;
+        }
+        
+        //...
+
+        // If we are currently pausing an activity, then don't do anything
+        // until that is done.
+        // 检查系统当前是否正在中止一个 Activity 组件。如果是，那么就要等到它中止完成之后，再启动 Activity 组件 next，因此，也直接返回了。
+        if (mPausingActivity != null) {
+            if (DEBUG_SWITCH) Slog.v(TAG, "Skip resume: pausing=" + mPausingActivity);
+            return false;
+        }
+
+        //...
+        
+        // We need to start pausing the current activity so the top one
+        // can be resumed...
+        // 调用成员函数 startPausingLocked 来通知 Launcher 组件进入 Paused 状态，以便它可以将焦点让给即将要启动的 MainActivity 组件。
+        if (mResumedActivity != null) {
+            if (DEBUG_SWITCH) Slog.v(TAG, "Skip resume: need to start pausing");
+            startPausingLocked(userLeaving, false);
+            return true;
+        }
+
+        //...
+    }
+```
+
+### Step11: ActivityStack.startPausingLocked
+
+1. 将 prev、成员变量 mPausingActivity 和 mLastPausedActivity 指向 launcher 组件。为啥呢，因为 MainActivity 激活后，Launcher 组件就是那个需要被 pausing 的。
+2. ActivityRecord 成员 app 是一个 ProcessRecord，用来描述 Activity 组件所运行在的应用程序进程。而 ProcessRecord 类又有一个成员变量 thread，它的类型为 ApplicationThreadProxy，用来描述一个 Binder 代理对象，引用的是一个类型为 ApplicationThread 的 Binder 本地对象。这里使用 prev.app.thread.schedulePauseActivity 向 launcher 组件发送一个消息，让其终止自己的运行。
+3. Launcher 组件处理完 ActivityManagerService 给它发送的中止通知之后，必须再向 ActivityManagerService 发送一个启动 MainActivity 组件的通知，以便 ActivityManagerService 可以将位于 Activity  组件堆栈顶端的MainActivity 组件启动起来。但是，ActivityManagerService 不能无限地等待，因此，就向 ActivityManagerService 所运行在的线程的消息队列发送一个类型为 PAUSE_TIMEOUT_MSG 的消息，并且指定这个消息在 PAUSE_TIMEOUT 毫秒之后处理。如果 Launcher 组件不能在 PAUSE_TIMEOUT 毫秒内再向 ActivityManagerService 发送一个启动 MainActivity 组件的通知，那么 ActivityManagerService 就会认为它没有响应了。
+
+```java
+    private final void startPausingLocked(boolean userLeaving, boolean uiSleeping) {
+        //...
+        ActivityRecord prev = mResumedActivity;
+        if (prev == null) {
+            RuntimeException e = new RuntimeException();
+            Slog.e(TAG, "Trying to pause when nothing is resumed", e);
+            resumeTopActivityLocked(null);
+            return;
+        }
+        if (DEBUG_PAUSE) Slog.v(TAG, "Start pausing: " + prev);
+        mResumedActivity = null;
+        mPausingActivity = prev;
+        mLastPausedActivity = prev;
+        prev.state = ActivityState.PAUSING;
+
+        //...
+        
+        if (prev.app != null && prev.app.thread != null) {
+            try {
+                //...
+                // 2. 远程调用，让 launcher 进入 pausing 状态
+                prev.app.thread.schedulePauseActivity(prev, prev.finishing, userLeaving,
+                        prev.configChangeFlags);
+                if (mMainStack) {
+                    mService.updateUsageStats(prev, false);
+                }
+            } catch (Exception e) {
+               //...
+            }
+        } else {
+            mPausingActivity = null;
+            mLastPausedActivity = null;
+        }
+
+        //...
+
+
+        if (mPausingActivity != null) {
+            //...
+
+            // Schedule a pause timeout in case the app doesn't respond.
+            // We don't give it much time because this directly impacts the
+            // responsiveness seen by the user.
+            // 3. 发送消息等待 launcher 组件 pausing 成功。
+            Message msg = mHandler.obtainMessage(PAUSE_TIMEOUT_MSG);
+            msg.obj = prev;
+            mHandler.sendMessageDelayed(msg, PAUSE_TIMEOUT);
+            if (DEBUG_PAUSE) Slog.v(TAG, "Waiting for pause to complete...");
+        } else {
+            // This activity failed to schedule the
+            // pause, so just treat it as being paused now.
+            if (DEBUG_PAUSE) Slog.v(TAG, "Activity not running, resuming next.");
+            resumeTopActivityLocked(null);
+        }
+    }
+```
