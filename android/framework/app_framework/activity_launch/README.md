@@ -301,6 +301,8 @@ final int startActivityLocked(IApplicationThread caller,
 4. 随后创建一个新的 TaskRecord, 并交给 AMS 来管理。
 5. 随后调用另外一个 startActivityLocked 来进行后续操作。
 
+> [在 AMS 中，TaskRecord ，ProcessRecord 和 ActivityRecord 的关系是什么?](android/framework/app_framework/ref/ar_pr_tr.md)
+
 ```java
  final int startActivityUncheckedLocked(ActivityRecord r,
             ActivityRecord sourceRecord, Uri[] grantedUriPermissions,
@@ -333,7 +335,7 @@ final int startActivityLocked(IApplicationThread caller,
             if (mService.mCurTask <= 0) {
                 mService.mCurTask = 1;
             }
-            // 创建一个新任务
+            // 创建一个新任务栈
             r.task = new TaskRecord(mService.mCurTask, r.info, intent,
                     (r.info.flags&ActivityInfo.FLAG_CLEAR_TASK_ON_LAUNCH) != 0);
             if (DEBUG_TASKS) Slog.v(TAG, "Starting new activity " + r
@@ -515,4 +517,61 @@ final int startActivityLocked(IApplicationThread caller,
             resumeTopActivityLocked(null);
         }
     }
+```
+
+### Step12: ApplicationThreadProxy.schedulePauseActivity
+
+这个 Proxy 本身就是发送一个远程通信，把 token (launcher 对应的 ActivityRecord 代理) 发送到 ActivityThread.
+
+```java
+public final void schedulePauseActivity(IBinder token, boolean finished,
+        boolean userLeaving, int configChanges) throws RemoteException {
+    Parcel data = Parcel.obtain();
+    data.writeInterfaceToken(IApplicationThread.descriptor);
+    data.writeStrongBinder(token);
+    data.writeInt(finished ? 1 : 0);
+    data.writeInt(userLeaving ? 1 :0);
+    data.writeInt(configChanges);
+    mRemote.transact(SCHEDULE_PAUSE_ACTIVITY_TRANSACTION, data, null,
+            IBinder.FLAG_ONEWAY);
+    data.recycle();
+}
+```
+
+> Step 13 - 17 
+> <img src="android/framework/app_framework/activity_launch/resources/3.png" style="width:50%">
+
+### Step13 ApplicationThread.schedulePauseActivity
+
+这个方法调用外部类 ActivityThread 的 queueOrSendMessage 来发送消息。
+
+```java
+public final void schedulePauseActivity(IBinder token, boolean finished,
+        boolean userLeaving, int configChanges) {
+    queueOrSendMessage(
+            finished ? H.PAUSE_ACTIVITY_FINISHING : H.PAUSE_ACTIVITY,
+            token,
+            (userLeaving ? 1 : 0),
+            configChanges);
+}
+```
+
+### Step14 ActivityThread.queueOrSendMessage
+
+成员变量 mH 是一个继承了 Handler 的对象，用来发送和处理主线程的消息。
+
+```java
+private final void queueOrSendMessage(int what, Object obj, int arg1, int arg2) {
+    synchronized (this) {
+        if (DEBUG_MESSAGES) Slog.v(
+            TAG, "SCHEDULE " + what + " " + mH.codeToString(what)
+            + ": " + arg1 + " / " + obj);
+        Message msg = Message.obtain();
+        msg.what = what;
+        msg.obj = obj;
+        msg.arg1 = arg1;
+        msg.arg2 = arg2;
+        mH.sendMessage(msg);
+    }
+}
 ```
