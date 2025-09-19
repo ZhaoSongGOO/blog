@@ -558,6 +558,8 @@ public final void schedulePauseActivity(IBinder token, boolean finished,
 
 ### Step14 ActivityThread.queueOrSendMessage
 
+> [Handler 和 Looper](android/framework/app_framework/ref/handler_looper.md)
+
 成员变量 mH 是一个继承了 Handler 的对象，用来发送和处理主线程的消息。
 
 ```java
@@ -575,3 +577,669 @@ private final void queueOrSendMessage(int what, Object obj, int arg1, int arg2) 
     }
 }
 ```
+
+### Step15 H.handleMessage
+
+上面的 mH 发送消息后，最终消息会调用 handleMessage 来处理。
+
+```java
+public void handleMessage(Message msg) {
+    if (DEBUG_MESSAGES) Slog.v(TAG, ">>> handling: " + msg.what);
+    switch (msg.what) {
+        //...
+        case PAUSE_ACTIVITY:
+            handlePauseActivity((IBinder)msg.obj, false, msg.arg1 != 0, msg.arg2);
+            maybeSnapshot();
+            break;
+        //...
+    }
+    //...
+}
+```
+
+### Step16 ActivityThread.handlePauseActivity
+
+在应用程序进程中启动的每一个 Activity 组件都使用一个 ActivityClientRecord 对象来描述，这些 ActivityClientRecord 对象对应于 ActivityManagerService 中的 ActivityRecord  对象，并且保存在ActivityThread 类的成员变量 mActivities 中。
+
+获得了要中止的目标 Activity 组件之后，ActivityThread 类的成员函数 handlePauseActivity 接下来做了三件事情。
+
+第一件事情是调用成员函数 performUserLeavingActivity 向 Launcher 组件发送一个用户离开事件通知，即调用它的成员函数 onUserLeaveHint。
+
+第二件事情是调用成员函数 performPauseActivity 向 Launcher 组件发送一个中止事件通知，即调用它的成员函数 onPause。
+
+第三件事情是调用 QueuedWork 类的静态成员函数 waitToFinish 等待完成前面的一些数据写入操作，例如，将数据写入到磁盘的操作。由于现在 Launcher 组件即将要进入 Paused 状态了，因此就要保证它前面的所有数据写入操作都处理完成；否则，等到它重新进入 Resumed 状态时，就无法恢复之前所保存的一些状态数据。
+
+最后通过远程调用到 AMS 的 activityPaused 方法。
+
+```java
+final HashMap<IBinder, ActivityClientRecord> mActivities
+        = new HashMap<IBinder, ActivityClientRecord>();
+//...
+private final void handlePauseActivity(IBinder token, boolean finished,
+        boolean userLeaving, int configChanges) {
+    ActivityClientRecord r = mActivities.get(token);
+    if (r != null) {
+        //Slog.v(TAG, "userLeaving=" + userLeaving + " handling pause of " + r);
+        if (userLeaving) {
+            performUserLeavingActivity(r);
+        }
+
+        r.activity.mConfigChangeFlags |= configChanges;
+        Bundle state = performPauseActivity(token, finished, true);
+
+        // Make sure any pending writes are now committed.
+        QueuedWork.waitToFinish();
+        
+        // Tell the activity manager we have paused.
+        try {
+            ActivityManagerNative.getDefault().activityPaused(token, state);
+        } catch (RemoteException ex) {
+        }
+    }
+}
+```
+
+### Step17 ActivityManagerProxy.activityPaused
+
+传入的参数是 Activity 在 AMS 中的 ActivityRecord 远程对象以及 Pause 的执行结果。
+
+```java
+public void activityPaused(IBinder token, Bundle state) throws RemoteException
+{
+    Parcel data = Parcel.obtain();
+    Parcel reply = Parcel.obtain();
+    data.writeInterfaceToken(IActivityManager.descriptor);
+    data.writeStrongBinder(token);
+    data.writeBundle(state);
+    mRemote.transact(ACTIVITY_PAUSED_TRANSACTION, data, reply, 0);
+    reply.readException();
+    data.recycle();
+    reply.recycle();
+}
+```
+
+---
+> Step 18 - 23 
+> <img src="android/framework/app_framework/activity_launch/resources/4.png" style="width:50%">
+---
+
+### Step18 ActivityManagerService.activityPaused
+
+```java
+    public final void activityPaused(IBinder token, Bundle icicle) {
+        //...
+        mMainStack.activityPaused(token, icicle, false);
+        //...
+    }
+```
+
+### Step19 ActivityStack.activityPaused
+
+第一，先找到 launcher token 对应的 ActivityRecord 对象。
+第二，因为已经收到了 Pause 消息，所以移除超时操作。
+第三，设置 launcher activity 的状态为 PAUSE。
+第四，启动 MainActivity.
+
+
+```java
+final void activityPaused(IBinder token, Bundle icicle, boolean timeout) {
+    if (DEBUG_PAUSE) Slog.v(
+        TAG, "Activity paused: token=" + token + ", icicle=" + icicle
+        + ", timeout=" + timeout);
+
+    ActivityRecord r = null;
+
+    synchronized (mService) {
+        //1. 找到 launcher 对应的 activity
+        int index = indexOfTokenLocked(token);
+        if (index >= 0) {
+            r = (ActivityRecord)mHistory.get(index);
+            if (!timeout) {
+                r.icicle = icicle;
+                r.haveState = true;
+            }
+            //2. 移除超时操作
+            mHandler.removeMessages(PAUSE_TIMEOUT_MSG, r);
+            if (mPausingActivity == r) {
+                //3. 设置 Activity 的状态
+                r.state = ActivityState.PAUSED;
+                //4. 启动 MainActivity.
+                completePauseLocked();
+            } else {
+                EventLog.writeEvent(EventLogTags.AM_FAILED_TO_PAUSE,
+                        System.identityHashCode(r), r.shortComponentName, 
+                        mPausingActivity != null
+                            ? mPausingActivity.shortComponentName : "(none)");
+            }
+        }
+    }
+}
+```
+
+### Step20 ActivityStack.completePauseLocked
+
+第一步，将当前 mPausingActivity 设置为 null，因为 launcher activity 已经进入了 Pausing 状态。
+第二步，resumeTopActivityLocked 启动堆栈顶部的 activity。
+
+```java
+    private final void completePauseLocked() {
+        ActivityRecord prev = mPausingActivity;
+        if (DEBUG_PAUSE) Slog.v(TAG, "Complete pause: " + prev);
+        
+        if (prev != null) {
+            //...
+            //1. 当前 activity 已经进入了 pausing 状态，所以设置为 null。
+            mPausingActivity = null;
+        }
+
+        if (!mService.mSleeping && !mService.mShuttingDown) {
+            //2. 启动堆栈顶部的 activity
+            resumeTopActivityLocked(prev);
+        } 
+        //...
+    }
+```
+
+### Step21 ActivityStack.resumeTopActivityLocked
+
+在前面的 Step10 中，ActivityManagerService 已经调用过它的成员函数 resumeTopActivityLocked 来试图启动 MainActivity 组件了；但是由于那时候 Launcher 组件尚未进入 Paused 状态，即 ActivityStack 类的成员变量 mResumedActivity 不等于 null，因此，就会先调用成员函数 startPausingLocked 来执行中止 Launcher 组件的操作。
+
+在前面的 Step11 中，ActivityManagerService 在向 Launcher 组件发送中止通知之前，已经将 ActivityStack 类的成员变量 mResumedActivity 设置为 null 了，因此，这时候就会 成员函数topRunningActivityLocked。
+
+对象 next 获得的是位于 Activity 组件堆栈顶端的，与即将启动的 MainActivity 组件对应的一个 ActivityRecord。由于这时候 MainActivity 组件尚未被启动起来，因此，它的成员变量 app 就会等于 null，接下来就会调用成员函数 startSpecificActivityLocked 将它启动起来。
+
+```java
+    final boolean resumeTopActivityLocked(ActivityRecord prev) {
+        // Find the first activity that is not finishing.
+        ActivityRecord next = topRunningActivityLocked(null);
+        //...
+        
+        // We need to start pausing the current activity so the top one
+        // can be resumed...
+        if (mResumedActivity != null) {
+            if (DEBUG_SWITCH) Slog.v(TAG, "Skip resume: need to start pausing");
+            startPausingLocked(userLeaving, false);
+            return true;
+        }
+
+        //...
+
+        if (next.app != null && next.app.thread != null) {
+            //...
+        } else {
+            //...
+            startSpecificActivityLocked(next, true, true);
+        }
+
+        return true;
+    }
+```
+
+### Step22 ActivityStack.startSpecificActivityLocked
+
+在 ActivityManagerService 中，每一个 Activity 组件都有一个用户 ID 和一个进程名称；其中，用户 ID 是在安装该 Activity 组件时由 PackageManagerService 分配的，而进程名称则是由该 Activity 组件的 `android:process` 属性来决定的。ActivityManagerService 在启动一个 Activity 组件时，首先会以它的用户 ID 和进程名称来检查系统中是否存在一个对应的应用程序进程。如果存在，就会直接通知这个应用程序进程将该 Activity 组件启动起来；否则，就会先以这个用户 ID 和进程名称来创建一个应用程序进程，然后再通知这个应用程序进程将该 Activity 组件启动起来。
+
+第一步检查与 ActivityRecord 对象 r 对应的 Activity 组件所需要的应用程序进程是否已经存在。如果存在，就直接调用成员函数 realStartActivityLocked 来启动该 Activity 组件；否则，就会先调用 ActivityManagerService类的成员函数 startProcessLocked 为该 Activity 组件创建一个应用程序进程，然后再将它启动起来。
+
+由于 MainActivity 组件是第一次被启动，即这时候系统中是不可能存在所需要的应用程序进程的，因此，接下来就会调用 ActivityManagerService 类的成员函数 startProcessLocked 来为 MainActivity 组件创建一个应用程序进程。
+
+```java
+private final void startSpecificActivityLocked(ActivityRecord r,
+        boolean andResume, boolean checkConfig) {
+    // Is this activity's application already running?
+    ProcessRecord app = mService.getProcessRecordLocked(r.processName,
+            r.info.applicationInfo.uid);
+    //...
+    
+    // app == null
+    if (app != null && app.thread != null) {
+        try {
+            realStartActivityLocked(r, app, andResume, checkConfig);
+            return;
+        } catch (RemoteException e) {
+            Slog.w(TAG, "Exception when starting activity "
+                    + r.intent.getComponent().flattenToShortString(), e);
+        }
+
+        // If a dead object exception was thrown -- fall through to
+        // restart the application.
+    }
+
+    mService.startProcessLocked(r.processName, r.info.applicationInfo, true, 0,
+            "activity", r.intent.getComponent(), false);
+}
+```
+
+### Step23 ActivityServiceManager.startProcessLocked
+
+首先检查请求创建的应用程序进程是否已经存在了。如果不存在，就会根据指定的名称以及用户 ID 来创建一个 ProcessRecord 对象，并且将它保存在 ActivityManagerService 类的成员变量 mProcessNames 中。
+
+```java
+    final ProcessRecord startProcessLocked(String processName,
+            ApplicationInfo info, boolean knownToBeDead, int intentFlags,
+            String hostingType, ComponentName hostingName, boolean allowWhileBooting) {
+        ProcessRecord app = getProcessRecordLocked(processName, info.uid);
+        //...
+
+        String hostingNameStr = hostingName != null
+                ? hostingName.flattenToShortString() : null;
+        //...
+        
+        if (app == null) {
+            app = newProcessRecordLocked(null, info, processName);
+            mProcessNames.put(processName, info.uid, app);
+        } 
+        //...
+
+        startProcessLocked(app, hostingType, hostingNameStr);
+        return (app.pid != 0) ? app : null;
+    }
+```
+
+随后调用一个重载版本的 startProcessLocked 方法。
+
+使用 `Process.start` 方法来创建一个进程，这个操作会返回进程的id `pid`。然后以变量 pid 为关键字将参数 app 所指向的一个 ProcessRecord 对象保存在 ActivityManagerService 类的成员变量 mPidsSelfLocked 中。
+
+最后代码向 ActivityManagerService 所运行在的线程的消息队列中发送一个类型为 PROC_START_TIMEOUT_MSG 的消息，并且指定这个消息在 PROC_START_TIMEOUT 毫秒之后处理。新的应用程序进程必须在 PROC_START_TIMEOUT 毫秒之内完成启动工作，并且向 ActivityManagerService 发送一个启动完成的通知，以便 ActivityManagerService 可以在它里面启动一个 Activity 组件；否则，ActivityManagerService 就会认为它启动超时了，因此，就不能将相应的 Activity 组件启动起来。
+
+
+```java
+    private final void startProcessLocked(ProcessRecord app,
+            String hostingType, String hostingNameStr) {
+        //...
+        try {
+            int uid = app.info.uid;
+            int[] gids = null;
+            try {
+                gids = mContext.getPackageManager().getPackageGids(
+                        app.info.packageName);
+            } catch (PackageManager.NameNotFoundException e) {
+                Slog.w(TAG, "Unable to retrieve gids", e);
+            }
+            //...
+            int debugFlags = 0;
+            //...
+            // 指定该进程的入口函数为 android.app.ActivityThread 类的静态成员函数 main
+            int pid = Process.start("android.app.ActivityThread",
+                    mSimpleProcessManagement ? app.processName : null, uid, uid,
+                    gids, debugFlags, null);
+            //...
+            if (pid == 0 || pid == MY_PID) {
+                //...
+            } else if (pid > 0) {
+                app.pid = pid;
+                app.removed = false;
+                synchronized (mPidsSelfLocked) {
+                    this.mPidsSelfLocked.put(pid, app);
+                    Message msg = mHandler.obtainMessage(PROC_START_TIMEOUT_MSG);
+                    msg.obj = app;
+                    mHandler.sendMessageDelayed(msg, PROC_START_TIMEOUT);
+                }
+            } else {
+                //...
+            }
+        } catch (RuntimeException e) {
+            //...
+        }
+    }
+```
+
+---
+
+在创建进程的时候，我们指定那个进程初始化后，执行的 java 层代码是 android.app.ActivityThread 类的静态成员函数 main。
+
+---
+
+### Step24 ActivityThread.main
+
+新的应用程序进程在启动时，主要做了两件事情。
+
+第一，在进程中创建了一个 ActivityThread 对象，并且调用它的成员函数 attch 向 AMS 发送一个启动完成通知。
+
+第三，调用 Looper 类的静态成员函数 prepareMainLooper 创建一个消息循环，并且在发送完成通知后，是的当前进程进入消息循环中。
+
+```java
+public final class ActivityThread {
+    final ApplicationThread mAppThread = new ApplicationThread();
+    //...
+    private final void attach(boolean system) {
+        //...
+        mSystemThread = system;
+        if (!system) {
+            //...
+            IActivityManager mgr = ActivityManagerNative.getDefault();
+            try {
+                mgr.attachApplication(mAppThread);
+            } catch (RemoteException ex) {
+            }
+        } 
+        //...
+    }
+
+    private final void detach()
+    {
+        sThreadLocal.set(null);
+    }
+    //...
+
+    public static final void main(String[] args) {
+        //...
+        Looper.prepareMainLooper();
+        //...
+        ActivityThread thread = new ActivityThread();
+        thread.attach(false);
+
+        //...
+        Looper.loop();
+
+        //...
+    }
+}
+```
+
+在创建 ActivityThread 对象 thread 时，会同时在它内部创建一个 ApplicationThread 对象 mAppThread。
+
+前面提到，ActivityThread 对象内部的 ApplicationThread 对象是一个 Binder 本地对象，AMS 就是通过它来和应用程序进程通信的。在 ActivityThread 类的成员函数 attach 中，首先调用 ActivityManagerNative 类的静态成员函数 getDefault 来获得 AMS 的一个代理对象；然后它的成员函数 attachApplication 向 AMS 发送一个进程间通信请求，并且将前面所创建的 ApplicationThread 对象传递给 AMS。AMS 代理对象的类型为 ActivityManagerProxy，因此，接下来就会调用 ActivityManagerProxy 类的成员函数向 AMS 发送一个进程间通信请求。
+
+### Step25 ActivityManagerProxy.attachApplication
+
+向 AMS 发送一个类型为 `ATTACH_APPLICATION_TRANSACTION` 的进程间通信请求。
+
+```java
+    public void attachApplication(IApplicationThread app) throws RemoteException
+    {
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        data.writeInterfaceToken(IActivityManager.descriptor);
+        data.writeStrongBinder(app.asBinder());
+        mRemote.transact(ATTACH_APPLICATION_TRANSACTION, data, reply, 0);
+        reply.readException();
+        data.recycle();
+        reply.recycle();
+    }
+```
+
+### Step26 ActivityManagerService.attachApplication
+
+转调 `attachApplicationLocked` 执行操作。
+
+
+```java
+    public final void attachApplication(IApplicationThread thread) {
+        synchronized (this) {
+            int callingPid = Binder.getCallingPid();
+            final long origId = Binder.clearCallingIdentity();
+            attachApplicationLocked(thread, callingPid);
+            Binder.restoreCallingIdentity(origId);
+        }
+    }
+```
+
+### Step27 ActivityManagerService.attachApplicationLocked
+
+参数 pid 指向了前面所创建的应用程序进程的 PID。在前面的 Step23 中，ActivityManagerService 以这个 PID 为关键字将一个 ProcessRecord 对象保存在了成员变量 mPidsSelfLocked中。因此，就可以通过参数 pid 将这个 ProcessRecord 对象取回来，并且保存在变量 app 中。
+
+前面得到的 ProcessRecord 对象 app 就是用来描述新创建的应用程序进程的。现在既然这个应用程序进程已经启动起来了，就继续对 ProcessRecord 对象 app 进行初始化，其中，最重要的是将它的成员变量 thread 设置为参数 thread 所指向的一个 ApplicationThread 代理对象。这样，AMS 以后就可以通过这个 ApplicationThread 代理对象来和新创建的应用程序进程进行通信了。
+
+然后既然 Activity 启动的消息已经发过来了，那就移除超时的信息。
+
+最后得到位于 Activity 组件堆栈顶端的一个 ActivityRecord 对象 hr，与它对应的 Activity 组件就是即将要启动的 MainActivity 组件，检查这个 Activity 组件的用户 ID 和进程名称是否与 ProcessRecord 对象 app 所描述的应用程序进程的用户 ID 和进程名称一致。如果一致，那么就说明 ActivityRecord 对象 hr 所描述的 Activity 组件是应该在 ProcessRecord 对象 app 所描述的应用程序进程中启动的，因此，就会调用 ActivityStack 类的成员函数 realStartActivityLocked 来请求该应用程序进程启动一个 Activity 组件。
+
+```java
+    private final boolean attachApplicationLocked(IApplicationThread thread,
+            int pid) {
+
+        // Find the application record that is being attached...  either via
+        // the pid if we are running in multiple processes, or just pull the
+        // next app record if we are emulating process with anonymous threads.
+        ProcessRecord app;
+        if (pid != MY_PID && pid >= 0) {
+            synchronized (mPidsSelfLocked) {
+                app = mPidsSelfLocked.get(pid);
+            }
+        } 
+        //...
+        String processName = app.processName;
+        //...
+        
+        app.thread = thread;
+        app.curAdj = app.setAdj = -100;
+        app.curSchedGroup = Process.THREAD_GROUP_DEFAULT;
+        app.setSchedGroup = Process.THREAD_GROUP_BG_NONINTERACTIVE;
+        app.forcingToForeground = null;
+        app.foregroundServices = false;
+        app.debugging = false;
+
+        mHandler.removeMessages(PROC_START_TIMEOUT_MSG, app);
+
+        boolean normalMode = mProcessesReady || isAllowedWhileBooting(app.info);
+        //...
+
+        // See if the top visible activity is waiting to run in this process...
+        ActivityRecord hr = mMainStack.topRunningActivityLocked(null);
+        if (hr != null && normalMode) {
+            if (hr.app == null && app.info.uid == hr.info.applicationInfo.uid
+                    && processName.equals(hr.processName)) {
+                try {
+                    if (mMainStack.realStartActivityLocked(hr, app, true, true)) {
+                        didSomething = true;
+                    }
+                } catch (Exception e) {
+                    //...
+                }
+            } else {
+                //...
+            }
+        }
+        //...
+        return true;
+    }
+```
+
+### Step28 ActivityStack.realStartActivityLocked
+
+接下来 ActivityRecord 就要在指定的 ProcessRecord 中开始运行了。随后就是使用 ApplicationThread 的远程调用触发 ApplicationThread 中的 scheduleLaunchActivity 方法。
+
+```java
+    final boolean realStartActivityLocked(ActivityRecord r,
+            ProcessRecord app, boolean andResume, boolean checkConfig)
+            throws RemoteException {
+        //...
+
+        r.app = app;
+
+        int idx = app.activities.indexOf(r);
+        if (idx < 0) {
+            app.activities.add(r);
+        }
+        //...
+
+        try {
+            //...
+            List<ResultInfo> results = null;
+            List<Intent> newIntents = null;
+            if (andResume) {
+                results = r.results;
+                newIntents = r.newIntents;
+            }
+            //...
+            app.thread.scheduleLaunchActivity(new Intent(r.intent), r,
+                    System.identityHashCode(r),
+                    r.info, r.icicle, results, newIntents, !andResume,
+                    mService.isNextTransitionForward());
+            //...
+        } catch (RemoteException e) {
+            //...
+        }
+        //...        
+        return true;
+    }
+```
+
+### Step29 ApplicationThreadProxy.scheduleLaunchActivity
+
+上一步中，AMS 拿到的 thread 其实是一个代理对象 ApplicationThreadProxy，代理的是之前创建的新进程中的 ApplicationThread 对象，即 mAppThread。
+
+```java
+public final void scheduleLaunchActivity(Intent intent, IBinder token, int ident,
+        ActivityInfo info, Bundle state, List<ResultInfo> pendingResults,
+        List<Intent> pendingNewIntents, boolean notResumed, boolean isForward)
+        throws RemoteException {
+    Parcel data = Parcel.obtain();
+    data.writeInterfaceToken(IApplicationThread.descriptor);
+    intent.writeToParcel(data, 0);
+    data.writeStrongBinder(token);
+    data.writeInt(ident);
+    info.writeToParcel(data, 0);
+    data.writeBundle(state);
+    data.writeTypedList(pendingResults);
+    data.writeTypedList(pendingNewIntents);
+    data.writeInt(notResumed ? 1 : 0);
+    data.writeInt(isForward ? 1 : 0);
+    mRemote.transact(SCHEDULE_LAUNCH_ACTIVITY_TRANSACTION, data, null,
+            IBinder.FLAG_ONEWAY);
+    data.recycle();
+}
+```
+
+### Step30 ApplicationThread.scheduleLaunchActivity
+
+ApplicationThread 类的成员函数 scheduleLaunchActivity 用来处理类型为 SCHEDULE_LAUNCH_ACTIVITY_TRANSACTION 的进程间通信请求，它主要是将要启动的 Activity 组件的信息封装成一个 ActivityClientRecord 对象，然后再以这个 ActivityClientRecord 对象为参数来调用 ActivityThread 类的成员函数 queueOrSendMessage，以便可以往新创建的应用程序进程的主线程的消息队列发送一个类型为 LAUNCH_ACTIVITY 的消息。
+
+
+```java
+public final void scheduleLaunchActivity(Intent intent, IBinder token, int ident,
+        ActivityInfo info, Bundle state, List<ResultInfo> pendingResults,
+        List<Intent> pendingNewIntents, boolean notResumed, boolean isForward) {
+    ActivityClientRecord r = new ActivityClientRecord();
+
+    r.token = token;
+    r.ident = ident;
+    r.intent = intent;
+    r.activityInfo = info;
+    r.state = state;
+
+    r.pendingResults = pendingResults;
+    r.pendingIntents = pendingNewIntents;
+
+    r.startsNotResumed = notResumed;
+    r.isForward = isForward;
+
+    queueOrSendMessage(H.LAUNCH_ACTIVITY, r);
+}
+```
+
+### Step31 ActivityThread.queueOrSendMessage
+
+这个和之前一样都是使用外部类 ActivityThread 的 queueOrSendMessage 方法给主线程发送了一个消息。
+
+
+### Step32
+
+首先调用成员函数 getPackageInfoNoCheck 来获得一个 LoadedApk 对象，并且保存在 ActivityClientRecord 对象 r 的成员变量 packageInfo 中。
+
+我们知道，每一个 Android 应用程序都是打包在一个 Apk 文件中的。一个 Apk 文件包含了一个 Android 应用程序的所有资源，应用程序进程在启动一个 Activity 组件时，需要将它所属的 Apk 文件加载进来，以便可以访问它里面的资源。在 ActivityThread 类内部，就使用一个 LoadedApk 对象来描述一个已加载的 Apk 文件。
+
+最后，调用 ActivityThread 类的成员函数 handleLaunchActivity 来启动由 ActivityClientRecord 对象所描述的一个 Activity 组件，即 MainActivity 组件。
+
+```java
+public void handleMessage(Message msg) {
+    if (DEBUG_MESSAGES) Slog.v(TAG, ">>> handling: " + msg.what);
+    switch (msg.what) {
+        case LAUNCH_ACTIVITY: {
+            ActivityClientRecord r = (ActivityClientRecord)msg.obj;
+
+            r.packageInfo = getPackageInfoNoCheck(
+                    r.activityInfo.applicationInfo);
+            handleLaunchActivity(r, null);
+        } break;
+        //...
+    }
+    //...
+}
+```
+
+### Step33 ActivityThread.handleLaunchActivity
+
+首先调用成员函数 performLaunchActivity 将 MainActivity 组件启动起来，接着调用成员函数 handleResumeActivity 将 MainActivity 组件的状态设置为 Resumed，表示它是系统当前激活的 Activity 组件。
+
+```java
+    private final void handleLaunchActivity(ActivityClientRecord r, Intent customIntent) {
+        //...
+        Activity a = performLaunchActivity(r, customIntent);
+
+        if (a != null) {
+            r.createdConfig = new Configuration(mConfiguration);
+            Bundle oldState = r.state;
+            handleResumeActivity(r.token, false, r.isForward);
+            //..
+        }
+        //...
+    }
+```
+
+### Step34 ActivityThread.performLaunchActivity
+
+首先获取需要启动的 Activity 的包名和类名，保存在一个结构 ComponentName 中。
+
+随后将这个类加载到内存中，并创建一个实例，保存在 activity 这个变量中。
+
+然后创建和初始化了一个 ContextImpl 对象 appContext，用来作为前面所创建的 Activity 对象 activity 的运行上下文环境，通过它就可以访问到特定的应用程序资源，以及启动其他的应用程序组件。接着使用 ContextImpl 对象 appContext 和 ActivityClientRecord 对象 r 来初始化 Activity 对象 activity。
+
+Activity 对象 activity 初始化完成之后，就调用成员变量 mInstrumentation 的成员函数 callActivityOnCreate 将 Activity 对象 activity 启动起来。在这个过程中，Activity 对象 activity 的成员函数 onCreate 就会被调用。
+
+Activity 对象 activity 启动完成之后，就会以 ActivityClientRecord 对象 r 的成员变量 token 为关键字，将 ActivityClientRecord 对象 r 保存在 ActivityThread 类的成员变量 mActivities 中。
+
+```java
+    private final Activity performLaunchActivity(ActivityClientRecord r, Intent customIntent) {
+        // System.out.println("##### [" + System.currentTimeMillis() + "] ActivityThread.performLaunchActivity(" + r + ")");
+
+        //...
+        ComponentName component = r.intent.getComponent();
+        //...
+
+        Activity activity = null;
+        try {
+            java.lang.ClassLoader cl = r.packageInfo.getClassLoader();
+            activity = mInstrumentation.newActivity(
+                    cl, component.getClassName(), r.intent);
+            //...
+        } catch (Exception e) {
+            //...
+        }
+
+        try {
+            Application app = r.packageInfo.makeApplication(false, mInstrumentation);
+            //...
+
+            if (activity != null) {
+                ContextImpl appContext = new ContextImpl();
+                appContext.init(r.packageInfo, r.token, this);
+                appContext.setOuterContext(activity);
+                CharSequence title = r.activityInfo.loadLabel(appContext.getPackageManager());
+                Configuration config = new Configuration(mConfiguration);
+                //...
+                activity.attach(appContext, this, getInstrumentation(), r.token,
+                        r.ident, app, r.intent, r.activityInfo, title, r.parent,
+                        r.embeddedID, r.lastNonConfigurationInstance,
+                        r.lastNonConfigurationChildInstances, config);
+
+                //...
+                mInstrumentation.callActivityOnCreate(activity, r.state);
+                //...
+            }
+            r.paused = true;
+
+            mActivities.put(r.token, r);
+
+        } catch (SuperNotCalledException e) {
+            throw e;
+
+        } catch (Exception e) {
+            //...
+        }
+
+        return activity;
+    }
+```
+
