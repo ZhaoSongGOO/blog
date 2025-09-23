@@ -9,3 +9,5 @@ Service 组件可以被 Activity 组件启动，也可以被其他的 Service �
 当一个 Service 组件被一个 Activity 组件或者另外一个 Service 组件启动时，我们可以将它们绑定起来，以便启动者可以方便地得到它的访问接口。
 
 ## [Service 在独立进程中启动](android/framework/app_framework/service_launch/service__stanlone_process_launch.md)
+
+## [Service 同进程中启动并使用 bind 创建长连接](android/framework/app_framework/service_launch/service_process_launch_and_bind.md)
