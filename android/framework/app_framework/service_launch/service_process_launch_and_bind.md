@@ -206,10 +206,6 @@ public int bindService(IApplicationThread caller, IBinder token,
 
 根据参数 token 来得到一个 ActivityRecord 对象 activity，用来描述正在请求 ActivityManagerService 执行绑定 Service 组件操作的一个 Activity 组件。
 
-根据参数 service 来得到一个 ServiceRecord 对象 s，用来描述即将被绑定的 Service 组件。接着再调用 ServiceRecord 对象 s 的成员函数 retrieveAppBindingLocked 来得到一个 AppBindRecord 对象 b，表示 ServiceRecord 对象 s 所描述的 Service 组件是绑定在 ProcessRecord 对象 callerApp 所描述的一个应用程序进程中的。
-
-接着将前面获得的 AppBindRecord 对象 b、ActivityRecord 对象 activity，以及参数 connection 封装成一个 ConnectionRecord 对象 c，表示 ActivityRecord 对象 activity 所描述的一个 Activity 组件通过参数 connection 绑定了 ServiceRecord 对象 s 所描述的一个 Service 组件，并且这个 Activity 组件是运行在 ProcessRecord 对象 callerApp 所描述的一个应用程序进程中的。
-
 ```java
     public int bindService(IApplicationThread caller, IBinder token,
             Intent service, String resolvedType,
@@ -259,6 +255,79 @@ public int bindService(IApplicationThread caller, IBinder token,
         return 1;
     }
 ```
+
+根据参数 service 来得到一个 ServiceRecord 对象 s，用来描述即将被绑定的 Service 组件。接着再调用 ServiceRecord 对象 s 的成员函数 retrieveAppBindingLocked 来得到一个 AppBindRecord 对象 b，表示 ServiceRecord 对象 s 所描述的 Service 组件是绑定在 ProcessRecord 对象 callerApp 所描述的一个应用程序进程中的。
+
+```java
+class ServiceRecord {
+    public AppBindRecord retrieveAppBindingLocked(Intent intent,
+            ProcessRecord app) {
+        Intent.FilterComparison filter = new Intent.FilterComparison(intent);
+        IntentBindRecord i = bindings.get(filter);
+        if (i == null) {
+            i = new IntentBindRecord(this, filter);
+            bindings.put(filter, i);
+        }
+        AppBindRecord a = i.apps.get(app);
+        if (a != null) {
+            return a;
+        }
+        a = new AppBindRecord(this, i, app);
+        i.apps.put(app, a);
+        return a;
+    }
+}
+```
+
+接着将前面获得的 AppBindRecord 对象 b、ActivityRecord 对象 activity，以及参数 connection 封装成一个 ConnectionRecord 对象 c，表示 ActivityRecord 对象 activity 所描述的一个 Activity 组件通过参数 connection 绑定了 ServiceRecord 对象 s 所描述的一个 Service 组件，并且这个 Activity 组件是运行在 ProcessRecord 对象 callerApp 所描述的一个应用程序进程中的。
+
+由于一个 Service 组件可能会被同一个应用程序进程中的多个 Activity 组件使用同一个 InnerConnection 对象来绑定，因此，在 ActivityManagerService 中，用来描述该 Service 组件的 ServiceRecord 对象就可能会对应有多个 ConnectionRecord 对象。在这种情况下，这些 ConnectionRecord 对象就会被保存在一个列表中。这个列表最终会被保存在对应的 ServiceRecord 对象的成员变量 connection 所描述的一个 HashMap 中，并且以它里面的 ConnectionRecord 对象共同使用的一个 InnerConnection 代理对象的 IBinder 接口为关键字。
+
+> 这里想解释下什么叫 "一个 Service 组件被同一个应用进程中的多个 Activity 组件使用同一个 InnerConnection 对象来绑定"
+> 前面可以知道，我们应用需要提供一个 connection，这个 connection 会在 LoadedApk 中被包装成 InnerConnection。
+> ```java 
+> public final IServiceConnection getServiceDispatcher(ServiceConnection c,
+>        Context context, Handler handler, int flags) {
+>    synchronized (mServices) {
+>        LoadedApk.ServiceDispatcher sd = null;
+>        HashMap<ServiceConnection, LoadedApk.ServiceDispatcher> map = mServices.get(context);
+>        if (map != null) {
+>            sd = map.get(c);
+>        }
+>        if (sd == null) {
+>            sd = new ServiceDispatcher(c, context, handler, flags);
+>            if (map == null) {
+>                map = new HashMap<ServiceConnection, LoadedApk.ServiceDispatcher>();
+>                mServices.put(context, map);
+>            }
+>            map.put(c, sd);
+>        } else {
+>            sd.validate(context, handler);
+>        }
+>        return sd.getIServiceConnection();
+>    }
+>}
+>```
+>
+> 这里假设 ActivityA 先 bind 了目标服务，此时 mServices 中保存着对应的键值对。随后 ActivityB 使用同一个 connection 也来 bind，那此时 mServices.get(context) 拿到的 map 是 null 吗？
+> 首先我们知道每一个 Activity 继承的 context 都是独自的实例，所以其不是同一个对象，但是 Context 重写了 hashCode 方法，使得同一个进程中 context 是逻辑上相等的。所以 ActivityB 会取出来 ActivityA 当时创建的 map，进而取得同一个 InnerConnection
+> ```java
+>  // contextimpl.java
+>  public int hashCode() {
+>      int result;
+>      result = packageName.hashCode();
+>      result = 31 * result + iconId;
+>      return result;
+>  }
+>```
+>
+
+
+从前面的 Step1 可以知道，参数 flags 的 Context.BIND_AUTO_CREATE 位等于 1，因此，最后就会调用成员函数 bringUpServiceLocked 来启动 ServiceRecord 对象 s 所描述的一个 Service 组件。等到这个 Service 组件启动起来之后，ActivityManagerService 再将它与 ActivityRecord 对象 activity 所描述的一个 Activity 组件绑定起来。
+
+
+## Step6: ActivityManagerService.bringUpServiceLocked
+
 
 
 
