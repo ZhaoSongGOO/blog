@@ -394,7 +394,7 @@ ServiceRecord 对象 r 所描述的 Service 组件启动完成之后，ActivityM
 
 ## Step14: ActivityManagerService.requestServiceBindingsLocked
 
-在ServiceRecord对象r的成员变量bindings中，保存了一系列IntentBindRecord对象，每一个IntentBindRecord对象都用来描述若干个需要将ServiceRecord对象r所描述的Service组件绑定到它们里面去的应用程序进程。因此，while循环依次调用另外一个成员函数requestServiceBindingLocked将ServiceRecord对象r所描述的Service组件绑定到这些应用程序进程中。
+在 ServiceRecord 对象 r 的成员变量 bindings 中，保存了一系列 IntentBindRecord 对象，每一个 IntentBindRecord 对象都用来描述若干个需要将 ServiceRecord 对象 r 所描述的 Service 组件绑定到它们里面去的应用程序进程。因此，while 循环依次调用另外一个成员函数 requestServiceBindingLocked 将 ServiceRecord 对象 r 所描述的 Service 组件绑定到这些应用程序进程中。
 
 ```java
     private final void requestServiceBindingsLocked(ServiceRecord r) {
@@ -408,7 +408,7 @@ ServiceRecord 对象 r 所描述的 Service 组件启动完成之后，ActivityM
     }
 ```
 
-参数rebind用来描述是否要将ServiceRecord对象r所描述的Service组件重新绑定到IntentBindRecord对象i所描述的应用程序进程中。从前面的调用过程可以知道，参数rebind的值为false，这意味着IntentBindRecord对象i所描述的应用程序进程是第一次请求绑定ServiceRecord对象r所描述的Service组件的。
+参数 rebind 用来描述是否要将 ServiceRecord 对象 r 所描述的 Service 组件重新绑定到 IntentBindRecord 对象 i 所描述的应用程序进程中。从前面的调用过程可以知道，参数 rebind 的值为 false，这意味着 IntentBindRecord 对象 i 所描述的应用程序进程是第一次请求绑定 ServiceRecord 对象 r 所描述的 Service 组件的。
 
 
 ```java
@@ -494,11 +494,11 @@ ServiceRecord 对象 r 所描述的 Service 组件启动完成之后，ActivityM
 
 ## Step20: ActivityManagerService.publishService
 
-参数token指向的是一个ServiceRecord对象，用来描述应用组件请求绑定的服务组件；参数intent指向的是一个Intent对象，应用组件最初就是通过它来请求ActivityManagerService绑定服务组件的；参数service指向的是服务组件内部的一个Binder本地对象。
+参数 token 指向的是一个 ServiceRecord 对象，用来描述应用组件请求绑定的服务组件；参数 intent 指向的是一个 Intent 对象，应用组件最初就是通过它来请求 ActivityManagerService 绑定服务组件的；参数 service 指向的是服务组件内部的一个 Binder 本地对象。
 
-每一个需要绑定ServiceRecord对象r所描述的Service组件的Activity组件都使用一个ConnectionRecord对象来描述。由于不同的Activity组件可能会使用相同的InnerConnection对象来绑定ServiceRecord对象r所描述的Service组件，因此，ActivityManagerService就会把这些使用了同一个InnerConnection对象的ConnectionRecord对象放在同一个列表中。这样ActivityManagerService就会得到与ServiceRecord对象r相关的一系列ConnectionRecord对象列表，它们最终保存在ServiceRecord对象r的成员变量connections所描述的一个HashMap中，并且以它们所使用的InnerConnection对象为关键字。
+每一个需要绑定 ServiceRecord 对象 r 所描述的 Service 组件的 Activity 组件都使用一个 ConnectionRecord 对象来描述。由于不同的 Activity 组件可能会使用相同的 InnerConnection 对象来绑定 ServiceRecord 对象 r 所描述的 Service 组件，因此，ActivityManagerService 就会把这些使用了同一个 InnerConnection 对象的 ConnectionRecord 对象放在同一个列表中。这样 ActivityManagerService 就会得到与 ServiceRecord 对象 r 相关的一系列 ConnectionRecord 对象列表，它们最终保存在 ServiceRecord 对象 r 的成员变量 connections 所描述的一个 HashMap 中，并且以它们所使用的 InnerConnection 对象为关键字。
 
-ConnectionRecord类的成员变量conn是一个类型为IServiceConnection的Binder代理对象，它引用了一个类型为InnerConnection的Binder本地对象。这个Binder本地对象是用来连接一个Service组件和一个Activity组件的，并且与这个Activity组件运行在同一个应用程序进程中。所以这里 conn.connected 本质是进行了一个远程调用。
+ConnectionRecord 类的成员变量 conn 是一个类型为 IServiceConnection 的 Binder 代理对象，它引用了一个类型为 InnerConnection 的 Binder 本地对象。这个 Binder 本地对象是用来连接一个 Service 组件和一个 Activity 组件的，并且与这个 Activity 组件运行在同一个应用程序进程中。所以这里 conn.connected 本质是进行了一个远程调用。
 
 ```java
     public void publishService(IBinder token, Intent intent, IBinder service) {
@@ -577,9 +577,9 @@ private static class InnerConnection extends IServiceConnection.Stub {
 
 ## Step22: ServiceDispatcher.connected
 
-ServiceDispatcher类的成员变量mActivityThread指向了ActivityThread类的成员变量mH，它是用来向应用程序Counter的主线程的消息队列发送消息的。
+ServiceDispatcher 类的成员变量 mActivityThread 指向了 ActivityThread 类的成员变量 mH，它是用来向应用程序 Counter 的主线程的消息队列发送消息的。
 
-这里首先将参数name和service封装成一个RunConnection对象，然后再将这个RunConnection对象封装成一个消息，最后将这个消息发送到应用程序Counter的主线程的消息队列中。这个消息最终是在RunConnection类的成员函数run中处理的。
+这里首先将参数 name 和 service 封装成一个 RunConnection 对象，然后再将这个 RunConnection 对象封装成一个消息，最后将这个消息发送到应用程序 Counter 的主线程的消息队列中。这个消息最终是在 RunConnection 类的成员函数 run 中处理的。
 
 ```java
     public void connected(ComponentName name, IBinder service) {
@@ -627,10 +627,11 @@ public void doConnected(ComponentName name, IBinder service) {
     ServiceDispatcher.ConnectionInfo info;
 
     synchronized (this) {
-    //...
-    // If there is a new service, it is now connected.
-    if (service != null) {
-        mConnection.onServiceConnected(name, service);
+        //...
+        // If there is a new service, it is now connected.
+        if (service != null) {
+            mConnection.onServiceConnected(name, service);
+        }
     }
 }
 ```

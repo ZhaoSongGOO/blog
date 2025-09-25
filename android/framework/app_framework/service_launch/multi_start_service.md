@@ -8,7 +8,6 @@
 > sendServiceArgsLocked 这个里面就是触发 servic 组件 onStartCommand 回调的执行。
 
 
-
 ```java
     private final boolean bringUpServiceLocked(ServiceRecord r,
             int intentFlags, boolean whileRestarting) {
