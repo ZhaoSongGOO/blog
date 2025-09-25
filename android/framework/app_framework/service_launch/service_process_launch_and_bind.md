@@ -328,6 +328,311 @@ class ServiceRecord {
 
 ## Step6: ActivityManagerService.bringUpServiceLocked
 
+首先获得 ServiceRecord 对象 r 所描述的 Service 组件的 android：process 属性，并且保存在变量 appName 中，接着根据这个属性的值，以及 ServiceRecord 对象 r 所描述的 Service 组件的用户 ID 在 ActivityManagerService 中查找是否已经存在一个对应的 ProcessRecord 对象 app。如果存在，那么就说明用来运行这个 Service 组件的应用程序进程已经存在了。因此，就会直接调用成员函数 realStartServiceLocked 在 ProcessRecord 对象 app 所描述的应用程序进程中启动这个 Service 组件。
 
+```java
+    private final boolean bringUpServiceLocked(ServiceRecord r,
+            int intentFlags, boolean whileRestarting) { 
+        //...
+        
+        final String appName = r.processName;
+        ProcessRecord app = getProcessRecordLocked(appName, r.appInfo.uid);
+        if (app != null && app.thread != null) {
+            try {
+                realStartServiceLocked(r, app);
+                return true;
+            } catch (RemoteException e) {
+                Slog.w(TAG, "Exception when starting service " + r.shortName, e);
+            }
+        }
+        //...
+    }
+```
+
+## Step7: ActivityManagerService.realStartServiceLocked
+
+首先将 ServiceRecord 对象 r 的成员变量 app 设置为 ProcessRecord 对象 app，接着又将 ServiceRecord 对象 r 添加到 ProcessRecord 对象 app 的成员变量 services 中，表示 ServiceRecord 对象 r 所描述的 Service 组件是在 ProcessRecord 对象 app 所描述的应用程序进程中启动的。
+
+ProcessRecord 对象 app 的成员变量 thread 是一个类型为 ApplicationThreadProxy 的 Binder 代理对象，它指向了 ProcessRecord 对象 app 所描述的应用程序进程中的一个 ApplicationThread 对象。因此，就调用它的成员函数 scheduleCreateService 来请求 ProcessRecord 对象 app 所描述的应用程序进程将 ServiceRecord 对象 r 所描述的 Service 组件启动起来。
+
+ServiceRecord 对象 r 所描述的 Service 组件启动完成之后，ActivityManagerService 就需要将它连接到请求绑定它的一个 Activity 组件中，这是通过调用 ActivityManagerService 类的另外一个成员函数 requestServiceBindingsLocked 来实现的。
+
+```java
+    private final void realStartServiceLocked(ServiceRecord r,
+            ProcessRecord app) throws RemoteException {
+        //...
+
+        r.app = app;
+        //...
+
+        app.services.add(r);
+        //...
+        try {
+            //...
+            app.thread.scheduleCreateService(r, r.serviceInfo);
+            //...
+        } finally {
+            //...
+        }
+
+        requestServiceBindingsLocked(r);
+        
+        //...
+    }
+```
+
+---
+
+## Step8: ApplicationThreadProxy.scheduleCreateService
+## Step9: ApplicationThread.scheduleCreateService
+## Step10: ActivityThread.queueOrSendMessage
+## Step11: ActivityThread.H.handleMessage
+## Step12: ActivityThread.handleCreateService
+## Step13: MyService.onCreate
+
+---
+
+## Step14: ActivityManagerService.requestServiceBindingsLocked
+
+在ServiceRecord对象r的成员变量bindings中，保存了一系列IntentBindRecord对象，每一个IntentBindRecord对象都用来描述若干个需要将ServiceRecord对象r所描述的Service组件绑定到它们里面去的应用程序进程。因此，while循环依次调用另外一个成员函数requestServiceBindingLocked将ServiceRecord对象r所描述的Service组件绑定到这些应用程序进程中。
+
+```java
+    private final void requestServiceBindingsLocked(ServiceRecord r) {
+        Iterator<IntentBindRecord> bindings = r.bindings.values().iterator();
+        while (bindings.hasNext()) {
+            IntentBindRecord i = bindings.next();
+            if (!requestServiceBindingLocked(r, i, false)) {
+                break;
+            }
+        }
+    }
+```
+
+参数rebind用来描述是否要将ServiceRecord对象r所描述的Service组件重新绑定到IntentBindRecord对象i所描述的应用程序进程中。从前面的调用过程可以知道，参数rebind的值为false，这意味着IntentBindRecord对象i所描述的应用程序进程是第一次请求绑定ServiceRecord对象r所描述的Service组件的。
+
+
+```java
+    private final boolean requestServiceBindingLocked(ServiceRecord r,
+            IntentBindRecord i, boolean rebind) {
+        //...
+        if ((!i.requested || rebind) && i.apps.size() > 0) {
+            try {
+               //...
+                r.app.thread.scheduleBindService(r, i.intent.getIntent(), rebind);
+                if (!rebind) {
+                    i.requested = true;
+                }
+                //...
+            } catch (RemoteException e) {
+                if (DEBUG_SERVICE) Slog.v(TAG, "Crashed while binding " + r);
+                return false;
+            }
+        }
+        return true;
+    }
+```
+
+## Step15: ApplicationThreadProxy.scheduleBindService
+
+传入的参数，token 是 ServiceRecord 本地对象，intent 是 service 要绑定的目标组件，rebind 代表是否重复绑定，在当前上下文中，是 false。
+
+```java
+    public final void scheduleBindService(IBinder token, Intent intent, boolean rebind)
+            throws RemoteException {
+        Parcel data = Parcel.obtain();
+        data.writeInterfaceToken(IApplicationThread.descriptor);
+        data.writeStrongBinder(token);
+        intent.writeToParcel(data, 0);
+        data.writeInt(rebind ? 1 : 0);
+        mRemote.transact(SCHEDULE_BIND_SERVICE_TRANSACTION, data, null,
+                IBinder.FLAG_ONEWAY);
+        data.recycle();
+    }
+```
+
+---
+
+## Step16: ApplicationThread.scheduleBindService
+## Step17: ActivityThread.queueOrSendMessage
+## Step18: ActivityThread.H.handleMessage
+
+---
+
+## Step19: ActivityThread.handleBindService
+
+这里首先从 mServices 中以 ServiceRecord 为 key 找到创建好的服务实例，随后调用其 onBind 方法获取 service 组件的本地 binder 对象，最终使用 AMS 的 publishService 远程调用返回数据。
+
+```java
+    private final void handleBindService(BindServiceData data) {
+        Service s = mServices.get(data.token);
+        if (s != null) {
+            try {
+                data.intent.setExtrasClassLoader(s.getClassLoader());
+                try {
+                    if (!data.rebind) {
+                        IBinder binder = s.onBind(data.intent);
+                        ActivityManagerNative.getDefault().publishService(
+                                data.token, data.intent, binder);
+                    } else {
+                        s.onRebind(data.intent);
+                        ActivityManagerNative.getDefault().serviceDoneExecuting(
+                                data.token, 0, 0, 0);
+                    }
+                    ensureJitEnabled();
+                } catch (RemoteException ex) {
+                }
+            } catch (Exception e) {
+                if (!mInstrumentation.onException(s, e)) {
+                    throw new RuntimeException(
+                            "Unable to bind to service " + s
+                            + " with " + data.intent + ": " + e.toString(), e);
+                }
+            }
+        }
+    }
+```
+
+## Step20: ActivityManagerService.publishService
+
+参数token指向的是一个ServiceRecord对象，用来描述应用组件请求绑定的服务组件；参数intent指向的是一个Intent对象，应用组件最初就是通过它来请求ActivityManagerService绑定服务组件的；参数service指向的是服务组件内部的一个Binder本地对象。
+
+每一个需要绑定ServiceRecord对象r所描述的Service组件的Activity组件都使用一个ConnectionRecord对象来描述。由于不同的Activity组件可能会使用相同的InnerConnection对象来绑定ServiceRecord对象r所描述的Service组件，因此，ActivityManagerService就会把这些使用了同一个InnerConnection对象的ConnectionRecord对象放在同一个列表中。这样ActivityManagerService就会得到与ServiceRecord对象r相关的一系列ConnectionRecord对象列表，它们最终保存在ServiceRecord对象r的成员变量connections所描述的一个HashMap中，并且以它们所使用的InnerConnection对象为关键字。
+
+ConnectionRecord类的成员变量conn是一个类型为IServiceConnection的Binder代理对象，它引用了一个类型为InnerConnection的Binder本地对象。这个Binder本地对象是用来连接一个Service组件和一个Activity组件的，并且与这个Activity组件运行在同一个应用程序进程中。所以这里 conn.connected 本质是进行了一个远程调用。
+
+```java
+    public void publishService(IBinder token, Intent intent, IBinder service) {
+        //...
+
+        synchronized(this) {
+            //...
+            ServiceRecord r = (ServiceRecord)token;
+
+            //...
+            if (r != null) {
+                Intent.FilterComparison filter
+                        = new Intent.FilterComparison(intent);
+                IntentBindRecord b = r.bindings.get(filter);
+                if (b != null && !b.received) {
+                    b.binder = service;
+                    b.requested = true;
+                    b.received = true;
+                    if (r.connections.size() > 0) {
+                        Iterator<ArrayList<ConnectionRecord>> it
+                                = r.connections.values().iterator();
+                        while (it.hasNext()) {
+                            ArrayList<ConnectionRecord> clist = it.next();
+                            for (int i=0; i<clist.size(); i++) {
+                                ConnectionRecord c = clist.get(i);
+                                if (!filter.equals(c.binding.intent.intent)) {
+                                    if (DEBUG_SERVICE) Slog.v(
+                                            TAG, "Not publishing to: " + c);
+                                    if (DEBUG_SERVICE) Slog.v(
+                                            TAG, "Bound intent: " + c.binding.intent.intent);
+                                    if (DEBUG_SERVICE) Slog.v(
+                                            TAG, "Published intent: " + intent);
+                                    continue;
+                                }
+                                if (DEBUG_SERVICE) Slog.v(TAG, "Publishing to: " + c);
+                                try {
+                                    c.conn.connected(r.name, service);
+                                } catch (Exception e) {
+                                    Slog.w(TAG, "Failure sending service " + r.name +
+                                          " to connection " + c.conn.asBinder() +
+                                          " (in " + c.binding.client.processName + ")", e);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                serviceDoneExecutingLocked(r, mStoppingServices.contains(r));
+
+                Binder.restoreCallingIdentity(origId);
+            }
+        }
+    }
+```
+
+## Step21: InnerConnection.connected
+
+这个调用的是 ServiceDispatcher 的 connected 方法。
+
+```java
+private static class InnerConnection extends IServiceConnection.Stub {
+            final WeakReference<LoadedApk.ServiceDispatcher> mDispatcher;
+
+            InnerConnection(LoadedApk.ServiceDispatcher sd) {
+                mDispatcher = new WeakReference<LoadedApk.ServiceDispatcher>(sd);
+            }
+
+            public void connected(ComponentName name, IBinder service) throws RemoteException {
+                LoadedApk.ServiceDispatcher sd = mDispatcher.get();
+                if (sd != null) {
+                    sd.connected(name, service);
+                }
+            }
+        }
+```
+
+## Step22: ServiceDispatcher.connected
+
+ServiceDispatcher类的成员变量mActivityThread指向了ActivityThread类的成员变量mH，它是用来向应用程序Counter的主线程的消息队列发送消息的。
+
+这里首先将参数name和service封装成一个RunConnection对象，然后再将这个RunConnection对象封装成一个消息，最后将这个消息发送到应用程序Counter的主线程的消息队列中。这个消息最终是在RunConnection类的成员函数run中处理的。
+
+```java
+    public void connected(ComponentName name, IBinder service) {
+        if (mActivityThread != null) {
+            mActivityThread.post(new RunConnection(name, service, 0));
+        } else {
+            doConnected(name, service);
+        }
+    }
+```
+
+## Step23: RunConnection.run
+
+这里可以看到，run 方法里还是执行的外部类的 doConnected 方法。
+
+```java
+private final class RunConnection implements Runnable {
+    RunConnection(ComponentName name, IBinder service, int command) {
+        mName = name;
+        mService = service;
+        mCommand = command;
+    }
+
+    public void run() {
+        if (mCommand == 0) {
+            doConnected(mName, mService);
+        } else if (mCommand == 1) {
+            doDeath(mName, mService);
+        }
+    }
+
+    final ComponentName mName;
+    final IBinder mService;
+    final int mCommand;
+}
+```
+
+## Step24: ServiceDispatcher.doConnected
+
+这个 mConnection 就是我们用户最初自己生成的 connection 对象，这里调用其回调函数 onServiceConnected 把 binder 对象传给他。
+
+```java
+public void doConnected(ComponentName name, IBinder service) {
+    ServiceDispatcher.ConnectionInfo old;
+    ServiceDispatcher.ConnectionInfo info;
+
+    synchronized (this) {
+    //...
+    // If there is a new service, it is now connected.
+    if (service != null) {
+        mConnection.onServiceConnected(name, service);
+    }
+}
+```
 
 

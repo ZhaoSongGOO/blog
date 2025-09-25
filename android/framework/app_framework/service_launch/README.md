@@ -11,3 +11,5 @@ Service 组件可以被 Activity 组件启动，也可以被其他的 Service �
 ## [Service 在独立进程中启动](android/framework/app_framework/service_launch/service__stanlone_process_launch.md)
 
 ## [Service 同进程中启动并使用 bind 创建长连接](android/framework/app_framework/service_launch/service_process_launch_and_bind.md)
+
+## [重复启动服务的系统行为](android/framework/app_framework/service_launch/multi_start_service.md)
