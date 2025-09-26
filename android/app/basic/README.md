@@ -705,7 +705,7 @@ if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
 
 ##### 显式广播
 
-发送时指定对应的 Receiver class 的就是显式广播，动态注册和静态注册的 receiver 都可以接收显式广播。
+发送时指定对应的 Receiver class 的就是显式广播，静态注册的 receiver 可以接收显式广播。而动态注册的 receiver 无法接收显示广播。
 
 ```kotlin
 val intent = Intent(this, ExplicitReceiver::class.java)

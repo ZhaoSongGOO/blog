@@ -13,3 +13,5 @@
 广播的发送方式分为有序和无序两种。我们在注册广播接收者时，可以指定它们的优先级。当 ActivityManagerService 接收到有序广播时，它就会先将这个有序广播发送给符合条件的、优先级较高的广播接收者处理，然后再发送给符合条件的、优先级较低的广播接收者处理；而当 ActivityManagerService 接收到无序广播时，它就会忽略广播接收者的优先级，并行地将这个无序广播发送给所有符合条件的广播接收者处理。
 
 ## [广播接收者的注册](android/framework/app_framework/broadcast/receiver_register.md)
+
+## [广播的发送](android/framework/app_framework/broadcast/send_broadcast.md)
