@@ -12,5 +12,7 @@
 
 ## [Android 通信总线 Binder](android/framework/binder/)
 
+## [Android 匿名共享内存](android/framework/ashmem/)
+
 ## [Android 应用程序框架](android/framework/app_framework/)
 
