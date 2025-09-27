@@ -540,3 +540,182 @@ while 循环用来处理保存在无序广播调度队列 mParallelBroadcasts �
         }
     }
 ```
+
+## Step9: ActivityManagerService.deliverToRegisteredReceiverLocked
+
+ActivityManagerService 将一个广播转发给一个目标广播接收者之前，有可能需要检查这个广播的发送者和接收者的权限。这个权限检查是双向的，即需要检查一个广播发送者是否有权限向一个目标广播接收者发送一个广播，以及一个目标广播接收者是否有权限接收一个广播发送者发出来的一个广播。
+
+如果不需要进行前面的权限检查，或者能够通过前面的权限检查，即变量 skip 的值等于 false，那么接下来就调用成员函数 performReceiveLocked 将 BroadcastRecord 对象 r 所描述的广播转发给 BroadcastFilter 对象 filter 所描述的目标广播接收者处理。
+
+```java
+private final void deliverToRegisteredReceiverLocked(BroadcastRecord r,
+        BroadcastFilter filter, boolean ordered) {
+    boolean skip = false;
+    // 检查广播发送者的权限
+    if (filter.requiredPermission != null) {
+        int perm = checkComponentPermission(filter.requiredPermission,
+                r.callingPid, r.callingUid, -1);
+        if (perm != PackageManager.PERMISSION_GRANTED) {
+            //...
+            skip = true;
+        }
+    }
+    // 检查广播接收者的权限
+    if (r.requiredPermission != null) {
+        int perm = checkComponentPermission(r.requiredPermission,
+                filter.receiverList.pid, filter.receiverList.uid, -1);
+        if (perm != PackageManager.PERMISSION_GRANTED) {
+            //...
+            skip = true;
+        }
+    }
+
+    if (!skip) {
+        //...
+        try {
+            //...
+            performReceiveLocked(filter.receiverList.app, filter.receiverList.receiver,
+                new Intent(r.intent), r.resultCode,
+                r.resultData, r.resultExtras, r.ordered, r.initialSticky);
+            //...
+        } catch (RemoteException e) {
+            //...
+        }
+    }
+}
+```
+
+## Step10: ActivityManagerService.performReceiveLocked
+
+> [为什么这里会存在 app == null 的情况?](android/framework/app_framework/broadcast/why_app_is_null_when_perfoem_receive_locked.md)
+
+这里 app 代表的是 receiver 所处的 app 进程对象，receiver 代表的是一个 InnerReceiver 本地对象。
+
+如果 receiver 存在对应的 app 进程，那就将当前广播通过对应的 ApplicationThreadProxy 发起远程调用。
+
+```java
+static void performReceiveLocked(ProcessRecord app, IIntentReceiver receiver,
+        Intent intent, int resultCode, String data, Bundle extras,
+        boolean ordered, boolean sticky) throws RemoteException {
+    // Send the intent to the receiver asynchronously using one-way binder calls.
+    if (app != null && app.thread != null) {
+        // If we have an app thread, do the call through that so it is
+        // correctly ordered with other one-way calls.
+        app.thread.scheduleRegisteredReceiver(receiver, intent, resultCode,
+                data, extras, ordered, sticky);
+    } else {
+        receiver.performReceive(intent, resultCode, data, extras, ordered, sticky);
+    }
+}
+```
+
+## Step11: ApplicationThread.scheduleRegisteredReceiver
+
+```java
+public void scheduleRegisteredReceiver(IIntentReceiver receiver, Intent intent,
+        int resultCode, String dataStr, Bundle extras, boolean ordered,
+        boolean sticky) throws RemoteException {
+    receiver.performReceive(intent, resultCode, dataStr, extras, ordered, sticky);
+}
+```
+
+## Step12: InnerReceiver.performReceive
+
+```java
+public void performReceive(Intent intent, int resultCode,
+        String data, Bundle extras, boolean ordered, boolean sticky) {
+    LoadedApk.ReceiverDispatcher rd = mDispatcher.get();
+    //...
+    if (rd != null) {
+        rd.performReceive(intent, resultCode, data, extras,
+                ordered, sticky);
+    } else {
+        //...
+        IActivityManager mgr = ActivityManagerNative.getDefault();
+        try {
+            mgr.finishReceiver(this, resultCode, data, extras, false);
+        } catch (RemoteException e) {
+            Slog.w(ActivityThread.TAG, "Couldn't finish broadcast to unregistered receiver");
+        }
+    }
+}
+```
+
+## Step13: ReceiverDispatcher.performReceive
+
+通过 mActivityThread 向应用进程主线程发送消息，消息体式 Args。
+
+这里还考虑了一个情况，就是 post 失败，这往往是因为主线程已经退出导致的，对于普通广播无所谓，但是对于有序广播，这个还会影响到后续接收者的发送，所以这里需要手动调用 finshReceiver 来通知 AMS。
+
+```java
+public void performReceive(Intent intent, int resultCode,
+        String data, Bundle extras, boolean ordered, boolean sticky) {
+    //...
+    Args args = new Args();
+    args.mCurIntent = intent;
+    args.mCurCode = resultCode;
+    args.mCurData = data;
+    args.mCurMap = extras;
+    args.mCurOrdered = ordered;
+    args.mCurSticky = sticky;
+    if (!mActivityThread.post(args)) {
+        if (mRegistered && ordered) {
+            IActivityManager mgr = ActivityManagerNative.getDefault();
+            try {
+                if (ActivityThread.DEBUG_BROADCAST) Slog.i(ActivityThread.TAG,
+                        "Finishing sync broadcast to " + mReceiver);
+                mgr.finishReceiver(mIIntentReceiver, args.mCurCode,
+                        args.mCurData, args.mCurMap, false);
+            } catch (RemoteException ex) {
+            }
+        }
+    }
+}
+```
+
+## Step14: Args.run
+
+ReceiverDispatcher 类的成员变量 mReceiver 指向了一个广播接收者；Args 类的成员变量 mCurIntent 用来描述一个广播，它的目标广播接收者便是 ReceiverDispatcher 类的成员变量 mReceiver 所指向的一个广播接收者，因此，就调用这个广播接收者的成员函数 onReceive 来接收这个广播。
+
+ReceiverDispatcher 类的成员变量 mRegistered 用来描述成员变量 mReceiver 所指向的广播接收者是否已经注册到 ActivityManagerService 中。如果已经注册了，那么它的值就等于 true；否则，就等于 false。此外，Args 类的成员变量 mCurOrdered 用来描述成员变量 mCurIntent 所描述的广播是否是一个有序广播。如果是，那么它的值就等于 true；否则，就等于 false。if 语句检查当前正在处理的广播是否是一个有序广播，并且它的目标广播接收者是否已经注册到了 ActivityManagerService 中。如果两个条件都满足，那么第 33 行到第 37 行代码就需要调用 ActivityManagerService 代理对象 mgr 的成员函数 finishReceiver 来通知 ActivityManagerService，它前面所转发出来的一个有序广播已经处理完成了。这时候，ActivityManagerService 就可以继续将这个有序广播转发给下一个目标广播接收者处理。
+```java
+final class Args implements Runnable {
+    private Intent mCurIntent;
+    private int mCurCode;
+    private String mCurData;
+    private Bundle mCurMap;
+    private boolean mCurOrdered;
+    private boolean mCurSticky;
+
+    public void run() {
+        BroadcastReceiver receiver = mReceiver;
+        //...
+        
+        IActivityManager mgr = ActivityManagerNative.getDefault();
+        Intent intent = mCurIntent;
+        mCurIntent = null;
+        
+        //...
+
+        try {
+            //...
+            receiver.onReceive(mContext, intent);
+        } catch (Exception e) {
+            //...
+        }
+        if (mRegistered && mCurOrdered) {
+            try {
+                //...
+                mgr.finishReceiver(mIIntentReceiver,
+                        receiver.getResultCode(),
+                        receiver.getResultData(),
+                        receiver.getResultExtras(false),
+                        receiver.getAbortBroadcast());
+            } catch (RemoteException ex) {
+            }
+        }
+    }
+}
+```
+
+
