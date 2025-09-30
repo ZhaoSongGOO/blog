@@ -15,3 +15,7 @@ Android 系统实现了一个匿名共享内存(Anonymous Shared Memory)子系�
 ## [AshMem 运行时库 cutils](android/framework/ashmem/cutils/)
 
 ## [AshMem cpp 库](android/framework/ashmem/cpplib/)
+
+## [AshMem java 库](android/framework/ashmem/javalib/)
+
+## [AshMem 原理](android/framework/ashmem/binder_fd/)
