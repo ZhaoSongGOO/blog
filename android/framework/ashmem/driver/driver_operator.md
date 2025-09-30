@@ -218,13 +218,13 @@ out:
 
 `sheme_set_file` 的内容如下。
 
-将虚拟内存 vma 的映射文件设置为前面为匿名共享内存 asma 所创建的临时文件，接着将虚拟内存 vma 的内存操作方法表设置为 shmem_vm_ops。shmem_vm_ops是一个类型为vm_operations_struct的结构体，它的成员变量fault指向了函数shmem_fault。
+将虚拟内存 vma 的映射文件设置为前面为匿名共享内存 asma 所创建的临时文件，接着将虚拟内存 vma 的内存操作方法表设置为 shmem_vm_ops。shmem_vm_ops 是一个类型为 vm_operations_struct 的结构体，它的成员变量 fault 指向了函数 shmem_fault。
 
-开始的时候，虚拟内存vma是没有映射物理页面的；因此，当它第一次被访问时，就会发生缺页异常(Page Fault)，这时候内核就会调用它的内存操作方法表中的函数shmem_fault给它映射物理页面。
+开始的时候，虚拟内存 vma 是没有映射物理页面的；因此，当它第一次被访问时，就会发生缺页异常(Page Fault)，这时候内核就会调用它的内存操作方法表中的函数 shmem_fault 给它映射物理页面。
 
-函数shmem_fault首先会在页面缓冲区中检查是否存在与缺页的虚拟地址对应的物理页面。如果存在，就直接将它们映射到缺页的虚拟地址；否则，再去页面换出设备中检查是否存在与缺页的虚拟地址对应的换出页面。
+函数 shmem_fault 首先会在页面缓冲区中检查是否存在与缺页的虚拟地址对应的物理页面。如果存在，就直接将它们映射到缺页的虚拟地址；否则，再去页面换出设备中检查是否存在与缺页的虚拟地址对应的换出页面。
 
-如果存在，就先把它们添加到页面缓冲区中，然后再映射到缺页的虚拟地址；否则，就需要为缺页的虚拟地址分配新的物理页面，并且从虚拟内存vma的映射文件vm_file中读入相应的内容来初始化这些新分配的物理页面，最后将这些物理页面加入到页面缓冲区中去。
+如果存在，就先把它们添加到页面缓冲区中，然后再映射到缺页的虚拟地址；否则，就需要为缺页的虚拟地址分配新的物理页面，并且从虚拟内存 vma 的映射文件 vm_file 中读入相应的内容来初始化这些新分配的物理页面，最后将这些物理页面加入到页面缓冲区中去。
 
 通过这种方式，我们就可以将一个物理页面映射到两个不同进程的虚拟地址空间，从而通过内存映射机制来实现共享内存的功能。
 
@@ -286,7 +286,7 @@ static int ashmem_pin_unpin(struct ashmem_area *asma, unsigned long cmd,
 		return -EFAULT;
 
 	/* per custom, you can pass zero for len to mean "everything onward" */
-	// 如果尺寸是0，那内部就设置尺寸为从偏移量到整体尺寸的区间长度。
+	// 如果尺寸是 0，那内部就设置尺寸为从偏移量到整体尺寸的区间长度。
 	if (!pin.len)
 		pin.len = PAGE_ALIGN(asma->size) - pin.offset;
 	// 是否对齐内存边界。本质上就是看是不是页大小的整数倍
@@ -298,8 +298,8 @@ static int ashmem_pin_unpin(struct ashmem_area *asma, unsigned long cmd,
 	// 是不是超出了 ashmem 分配的内存大小
 	if (unlikely(PAGE_ALIGN(asma->size) < pin.offset + pin.len))
 		return -EINVAL;
-	// 计算要锁定或者解锁的内存块的开始地址和结束地址，并且保存在变量pgstart和pgend中。它们是以页为单位的，
-	// 并且是一个相对地址，即相对匿名共享内存asma的起始地址。
+	// 计算要锁定或者解锁的内存块的开始地址和结束地址，并且保存在变量 pgstart 和 pgend 中。它们是以页为单位的，
+	// 并且是一个相对地址，即相对匿名共享内存 asma 的起始地址。
 	pgstart = pin.offset / PAGE_SIZE;
 	pgend = pgstart + (pin.len / PAGE_SIZE) - 1;
 
@@ -325,7 +325,7 @@ static int ashmem_pin_unpin(struct ashmem_area *asma, unsigned long cmd,
 }
 ```
 
-首先来看内存解锁的过程。前面提到，一块匿名共享内存的所有解锁内存块都是按照地址值从大到小的顺序保存在其解锁内存块列表unpinned_list中的，并且它们是互不相交的。因此，函数ashmem_unpin在解锁一个内存块时，首先检查这个内存块是否与那些处于解锁状态的内存块相交。如果相交，就要对它们进行合并，然后在目标匿名共享内存的解锁内存块列表unpinned_list中找到一个合适的位置来保存合并后得到的内存块。
+首先来看内存解锁的过程。前面提到，一块匿名共享内存的所有解锁内存块都是按照地址值从大到小的顺序保存在其解锁内存块列表 unpinned_list 中的，并且它们是互不相交的。因此，函数 ashmem_unpin 在解锁一个内存块时，首先检查这个内存块是否与那些处于解锁状态的内存块相交。如果相交，就要对它们进行合并，然后在目标匿名共享内存的解锁内存块列表 unpinned_list 中找到一个合适的位置来保存合并后得到的内存块。
 
 <img src="android/framework/ashmem/resources/2.png" style="width:70%">
 
@@ -336,9 +336,9 @@ static int ashmem_unpin(struct ashmem_area *asma, size_t pgstart, size_t pgend)
 	unsigned int purged = ASHMEM_NOT_PURGED;
 
 	/*
-	循环在目标匿名共享内存asma的解锁内存块列表unpinned_list中遍历每一块处于解锁状态的内存。
-	如果发现一个已解锁内存块range与即将要解锁的内存块[pgstart，pgend]相交，那么就需要对它们执行合并操作，
-	即调整参数pgstart和pgend的值，使得已解锁内存块range包含在它里面。
+	循环在目标匿名共享内存 asma 的解锁内存块列表 unpinned_list 中遍历每一块处于解锁状态的内存。
+	如果发现一个已解锁内存块 range 与即将要解锁的内存块[pgstart，pgend]相交，那么就需要对它们执行合并操作，
+	即调整参数 pgstart 和 pgend 的值，使得已解锁内存块 range 包含在它里面。
 	*/
 restart:
 	list_for_each_entry_safe(range, next, &asma->unpinned_list, unpinned) {
@@ -434,11 +434,11 @@ static int ashmem_pin(struct ashmem_area *asma, size_t pgstart, size_t pgend)
 
 ## 匿名共享内存块的回收过程
 
-Ashmem驱动程序在启动时，向内存管理系统注册了一个内存回收函数ashmem_shrink。当系统内存不足时，函数ashmem_shrink就会被调用来回收那些处于解锁状态的匿名共享内存。
+Ashmem 驱动程序在启动时，向内存管理系统注册了一个内存回收函数 ashmem_shrink。当系统内存不足时，函数 ashmem_shrink 就会被调用来回收那些处于解锁状态的匿名共享内存。
 
-数nr_to_scan表示内存管理系统希望回收的内存页数。如果它的值等于0，那么就表示内存管理系统并不是通知函数ashmem_shrink去执行回收匿名共享内存的操作，而是查询Ashmem驱动程序目前有多少匿名共享内存页可以被回收。
+数 nr_to_scan 表示内存管理系统希望回收的内存页数。如果它的值等于 0，那么就表示内存管理系统并不是通知函数 ashmem_shrink 去执行回收匿名共享内存的操作，而是查询 Ashmem 驱动程序目前有多少匿名共享内存页可以被回收。
 
-因此，将全局变量lru_count的值返回给调用者。如果参数nr_to_scan的值大于0，那么接下来的for循环就遍历全局列表ashmem_lru_list中的解锁内存块，并且逐一地调用函数vmtruncate_range来回收它们所占用的物理页面，直到回收的物理页面数达到nr_to_scan，或者全局列表ashmem_lru_list中已经没有内存可回收为止。
+因此，将全局变量 lru_count 的值返回给调用者。如果参数 nr_to_scan 的值大于 0，那么接下来的 for 循环就遍历全局列表 ashmem_lru_list 中的解锁内存块，并且逐一地调用函数 vmtruncate_range 来回收它们所占用的物理页面，直到回收的物理页面数达到 nr_to_scan，或者全局列表 ashmem_lru_list 中已经没有内存可回收为止。
 
 ```c
 /*

@@ -11,3 +11,5 @@ Android 系统实现了一个匿名共享内存(Anonymous Shared Memory)子系�
 传统的 Linux 系统使用一个整数来标志一块共享内存，而 Android 系统则使用一个文件描述符来标志一块匿名共享内存。使用文件描述符来描述一块匿名共享内存有两个好处：一是可以方便地将它映射到进程的地址空间，从而可以直接访问它的内容；二是可以使用 Binder 进程间通信机制来传输这个文件描述符，从而实现在不同的应用程序之间共享一块匿名内存。Binder 进程间通信机制使用一个类型为 BINDER_TYPE_FD 的 Binder 对象来描述一个文件描述符，当 Binder 驱动程序发现进程间通信数据中包含有这种 Binder 对象时，就会将对应的文件描述符复制到目标进程中，从而实现在两个进程中共享同一个文件。
 
 ## [AshMem 驱动程序](android/framework/ashmem/driver/)
+
+## [AshMem 运行时库 cutils](android/framework/ashmem/cutils/)
