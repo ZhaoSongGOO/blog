@@ -1,5 +1,7 @@
 # 基础数据类型
 
+>[更详细的数据分析](android/framework/ashmem/ref/area_and_range_struct_analysis.md)
+
 ## ashmem_area
 
 - name 是共享内存的名称。
@@ -7,6 +9,7 @@
 - 成员变量 unpinned_list 用来描述一个解锁内存块列表。前面提到，一块匿名共享内存可以动态地划分为若干个小块，当这些小块的内存处于解锁状态时，它们就会被添加到所属匿名共享内存的解锁内存块列表中。解锁内存块列表中的内存块地址是互不相交的，并且按照地址值从大到小的顺序来排列。
 
 - 成员变量 file 指向临时文件系统 tmpfs 中的一个文件，而成员变量 size 用来描述这个文件的大小。前面提到，匿名共享内存是基于 Linux 内核的临时文件系统 tmpfs 来实现的；因此，每一块匿名共享内存在临时文件系统 tmpfs 中都有一个对应的文件，这个文件的大小即为对应的匿名共享内存的大小。
+> [为什么需要 file](android/framework/ashmem/ref/why_need_file_member_in_area.md)
 
 - 成员变量 prot_mask 用来描述一块匿名共享内存的访问保护位。一块匿名共享内存的默认访问保护位被设置为 PROT_MASK。
 
