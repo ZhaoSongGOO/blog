@@ -16,3 +16,5 @@
 
 ## [Android 应用程序框架](android/framework/app_framework/)
 
+## [Zygote 和 System 进程启动](android/framework/zygote/)
+
