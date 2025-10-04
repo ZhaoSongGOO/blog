@@ -83,4 +83,8 @@ try {
 
 ## [ContentProvider 启动过程](android/framework/app_framework/content_provider/content_provider_launch.md)
 
+## [ContentProvider 数据共享原理](android/framework/app_framework/content_provider/content_provider_data_transform.md)
+
+## [ContentProvider 数据传输过程](android/framework/app_framework/content_provider/content_provider_data_transform_process.md)
+
 

@@ -44,11 +44,11 @@ def process_file(input_path: str, output_path: str):
         formatted_content = format_spacing(content)
         print("格式化完成！")
         
-        # 如果输出路径和输入路径相同，创建一个备份
-        if os.path.abspath(input_path) == os.path.abspath(output_path):
-            backup_path = input_path + '.bak'
-            print(f"警告：输入和输出路径相同。将创建备份文件: {backup_path}")
-            os.rename(input_path, backup_path)
+        # # 如果输出路径和输入路径相同，创建一个备份
+        # if os.path.abspath(input_path) == os.path.abspath(output_path):
+        #     backup_path = input_path + '.bak'
+        #     print(f"警告：输入和输出路径相同。将创建备份文件: {backup_path}")
+        #     os.rename(input_path, backup_path)
 
         with open(output_path, 'w', encoding='utf-8') as f_out:
             f_out.write(formatted_content)
