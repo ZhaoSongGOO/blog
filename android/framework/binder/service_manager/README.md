@@ -542,7 +542,7 @@ status_t IPCThreadState::talkWithDriver(bool doReceive)
 		}
 ```
 
-在 binder_transaction 中，首先会判断 handler 是不是 0, 如果是 0 直接使用 binder_context_mgr_node，不是 0的话，将首先获取对应的 binder_ref, 然后再从 binder_ref 获取到 binder_node。
+在 binder_transaction 中，首先会判断 handle 是不是 0, 如果是 0 直接使用 binder_context_mgr_node，不是 0的话，将首先获取对应的 binder_ref, 然后再从 binder_ref 获取到 binder_node。
 
 ```c
 		if (tr->target.handle) {
