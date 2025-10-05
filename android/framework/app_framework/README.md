@@ -9,3 +9,5 @@
 ## [Android ContentProvider](android/framework/app_framework/content_provider/)
 
 ## [Android 应用程序进程的启动过程](android/framework/app_framework/app_launch/)
+
+## [Android 应用程序的消息处理机制](android/framework/app_framework/message/)
