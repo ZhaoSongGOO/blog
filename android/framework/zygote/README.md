@@ -7,3 +7,5 @@ Zygote 进程是通过复制自身的方式来创建 System 进程和应用程�
 Zygote 进程在启动完成之后，会马上将 System 进程启动起来，以便它可以将系统的关键服务启动起来。这些关键服务包括 ActivityManagerService 和 Content 管理服务 ContentService，以及 Window 管理服务 WindowManagerService 和 Package 管理服务 PackageManagerService。
 
 ## [Zygote 进程启动](android/framework/zygote/zygote_launch.md)
+
+## [System 进程的启动过程](android/framework/zygote/system_server_launch.md)
