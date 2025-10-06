@@ -13,3 +13,5 @@
 ## [Android 应用程序的消息处理机制](android/framework/app_framework/message/)
 
 ## [Android应用程序线程的消息循环模型](android/framework/app_framework/application_message_loop/)
+
+## [Android 应用安装与显示过程](android/framework/app_framework/app_install/)
