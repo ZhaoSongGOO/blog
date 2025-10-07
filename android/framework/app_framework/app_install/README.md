@@ -11,5 +11,7 @@ Android 系统启动过程的最后一步是启动一个 Home 应用程序，用
 
 ## [App 安装过程](android/framework/app_framework/app_install/install_app_process.md)
 
+## [应用程序显示过程](android/framework/app_framework/app_install/launcher_app.md)
+
 
 

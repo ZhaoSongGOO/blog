@@ -103,6 +103,9 @@ public static final IPackageManager main(Context context, boolean factoryTest) {
 ### Step2: Settings.readLP
 
 > [Android 共享用户 id](android/framework/app_framework/ref/shared_user.md)
+> [Packages.xml 文件内容](android/framework/app_framework/ref/process_xml_content.md)
+> [AndroidManifest 中 sharedUserID 的作用](android/framework/app_framework/ref/what_is_shared_user_id_in_android_manifest.md)
+> [AndroidManifest sharedUserID 和 Package.xml 中 shared-user 标签的区别](android/framework/app_framework/ref/different_of_shareduseid_and_packages_xml.md)
 
 ```java
 class Settings {
@@ -556,3 +559,579 @@ class Settings {
         return pkg;
     }
 ```
+
+另外一个重载版本的 parsePackage 实现如下。
+
+```java
+    private Package parsePackage(
+        Resources res, XmlResourceParser parser, int flags, String[] outError)
+        throws XmlPullParserException, IOException {
+        AttributeSet attrs = parser;
+        //...
+        // 获取应用程序的包名称
+        String pkgName = parsePackageName(parser, attrs, flags, outError);
+        //...
+        int type;
+        // 使用这个包名称创建一个 Package 对象
+        final Package pkg = new Package(pkgName);
+        boolean foundApp = false;
+        
+        TypedArray sa = res.obtainAttributes(attrs,
+                com.android.internal.R.styleable.AndroidManifest);
+       //...
+       // 读取 "android:sharedUserId" 属性的值，这个属性表示应用程序要与其他应用程序共享同一个 Linux 用户 ID
+        String str = sa.getNonConfigurationString(
+                com.android.internal.R.styleable.AndroidManifest_sharedUserId, 0);
+        if (str != null && str.length() > 0) {
+            //...
+            pkg.mSharedUserId = str.intern();
+           //...
+        }
+        sa.recycle();
+
+        //...
+        // 循环解析所有的标签
+        while ((type=parser.next()) != parser.END_DOCUMENT
+               && (type != parser.END_TAG || parser.getDepth() > outerDepth)) {
+            //...
+
+            String tagName = parser.getName();
+            if (tagName.equals("application")) {
+                //...
+                // 使用 parseApplication 解析 application 标签
+                if (!parseApplication(pkg, res, parser, attrs, flags, outError)) {
+                    return null;
+                }
+            } 
+            //...
+            else if (tagName.equals("uses-permission")) {
+                /*
+                    uses-permission 标签对应一个资源访问权限。一个资源访问权限又是与一个 Linux 用户组 ID 相对应的，
+                    即如果一个应用程序申请了某一个资源访问权限，那么它就会获得一个对应的 Linux 用户组 ID。
+                */
+                sa = res.obtainAttributes(attrs,
+                        com.android.internal.R.styleable.AndroidManifestUsesPermission);
+
+                // Note: don't allow this value to be a reference to a resource
+                // that may change.
+                // 获取权限的名字
+                String name = sa.getNonResourceString(
+                        com.android.internal.R.styleable.AndroidManifestUsesPermission_name);
+
+                sa.recycle();
+
+                if (name != null && !pkg.requestedPermissions.contains(name)) {
+                    // 保存权限的名字
+                    pkg.requestedPermissions.add(name.intern());
+                }
+
+                //...
+
+            } //...
+
+        return pkg;
+        }
+    }
+```
+
+### Step10: PackageParser.parseApplication
+
+```java
+    private boolean parseApplication(Package owner, Resources res,
+            XmlPullParser parser, AttributeSet attrs, int flags, String[] outError)
+        throws XmlPullParserException, IOException {
+        //...
+        int type;
+        while ((type=parser.next()) != parser.END_DOCUMENT
+               && (type != parser.END_TAG || parser.getDepth() > innerDepth)) {
+            //...
+
+            String tagName = parser.getName();
+            // 解析 activity 组件
+            if (tagName.equals("activity")) {
+                Activity a = parseActivity(owner, res, parser, attrs, flags, outError, false);
+                //...
+                owner.activities.add(a);
+
+            } else if (tagName.equals("receiver")) {
+                // 解析 broadcast receiver 组件
+                Activity a = parseActivity(owner, res, parser, attrs, flags, outError, true);
+                //...
+
+                owner.receivers.add(a);
+
+            } else if (tagName.equals("service")) {
+                // 解析 service
+                Service s = parseService(owner, res, parser, attrs, flags, outError);
+                //...
+
+                owner.services.add(s);
+
+            } else if (tagName.equals("provider")) {
+                // 解析 content provider
+                Provider p = parseProvider(owner, res, parser, attrs, flags, outError);
+                //...
+
+                owner.providers.add(p);
+
+            } //...
+        }
+
+        return true;
+    }
+```
+
+至此，我们就分析了当前文件的 AndroidManifest.xml 中的属性信息，随后回到 Step8 开始安装 APK。
+
+### Step11: PackageManagerService.scanPackageLI 重载版本
+
+首先我们来看下 PMS 类的几个数据成员。
+
+```java
+// 所有已经安装了的应用程序都是使用一个 Package 对象来描述的，这些 Package 对象以 Package 的名称为关键字保存在这个 hashMap 中。
+final HashMap<String, PackageParser.Package> mPackages =
+            new HashMap<String, PackageParser.Package>();
+// All available activities, for your resolving pleasure.
+final ActivityIntentResolver mActivities =
+        new ActivityIntentResolver();
+
+// All available receivers, for your resolving pleasure.
+final ActivityIntentResolver mReceivers =
+        new ActivityIntentResolver();
+
+// All available services, for your resolving pleasure.
+final ServiceIntentResolver mServices = new ServiceIntentResolver();
+
+// Keys are String (provider class name), values are Provider.
+final HashMap<ComponentName, PackageParser.Provider> mProvidersByComponent =
+        new HashMap<ComponentName, PackageParser.Provider>();
+
+// Mapping from provider base names (first directory in content URI codePath)
+// to the provider information.
+final HashMap<String, PackageParser.Provider> mProviders =
+        new HashMap<String, PackageParser.Provider>();
+```
+
+然后，我们来分析这个重载版本的 scanPackageLI 方法。
+
+这里主要是先对 Package 分配 UID，随后解析四大组件进行存储。
+
+
+```java
+    private PackageParser.Package scanPackageLI(PackageParser.Package pkg,
+            int parseFlags, int scanMode, long currentTime) {
+        //...
+
+        SharedUserSetting suid = null;
+        PackageSetting pkgSetting = null;
+
+        //...
+        
+        synchronized (mPackages) {
+            //...
+            // 1. 为 Package 分配 Linux 用户 ID
+            if (pkg.mSharedUserId != null) { // 如果 package 指定了 sharedUserID
+                suid = mSettings.getSharedUserLP(pkg.mSharedUserId,  // 获取 sharedID
+                        pkg.applicationInfo.flags, true);
+                if (suid == null) {
+                    //...
+                    return null;
+                }
+                //...
+            }
+
+            //...
+            pkgSetting = mSettings.getPackageLP(pkg, origPackage, realName, suid, destCodeFile,
+                    destResourceFile, pkg.applicationInfo.nativeLibraryDir,
+                    pkg.applicationInfo.flags, true, false);
+            //...
+        }    
+        //...
+
+        synchronized (mPackages) {
+            //...
+            // 把那个 package 保存在 mPackages 变量中
+            mPackages.put(pkg.applicationInfo.packageName, pkg);
+            //...
+
+            int N = pkg.providers.size();
+            StringBuilder r = null;
+            int i;
+            // 保存 contentProvider 信息
+            for (i=0; i<N; i++) {
+                PackageParser.Provider p = pkg.providers.get(i);
+                //...
+                mProvidersByComponent.put(new ComponentName(p.info.packageName,
+                        p.info.name), p);
+                //...
+            }
+            //...
+            // 保存 service 信息
+            N = pkg.services.size();
+            r = null;
+            for (i=0; i<N; i++) {
+                PackageParser.Service s = pkg.services.get(i);
+                //...
+                mServices.addService(s);
+                //...
+            }
+            //...
+            // 保存 broadcast receiver 信息
+            N = pkg.receivers.size();
+            r = null;
+            for (i=0; i<N; i++) {
+                PackageParser.Activity a = pkg.receivers.get(i);
+                //...
+                mReceivers.addActivity(a, "receiver");
+                //...
+            }
+            //...
+            // 保存 activity 信息
+            N = pkg.activities.size();
+            r = null;
+            for (i=0; i<N; i++) {
+                PackageParser.Activity a = pkg.activities.get(i);
+                //...
+                mActivities.addActivity(a, "activity");
+                //...
+            }
+            //...
+        }
+
+        return pkg;
+    }
+```
+
+前面我们提到，在解析 packages.xml 文件的时候，对于 shared-user 标签，我们会把每个标签解析成一个 SharedUserSettings 对象，并以其 name 为关键字保存在 Settings 类的 mSharedUsers 对象中。
+
+这里先分析 package 是不是指定了 sharedUserID，如果指定了，就调用 getSharedUserLP 尝试去获取 sharedUserID。
+
+我们查看一下 `getSharedUserLP` 方法的实现。
+
+```java
+SharedUserSetting getSharedUserLP(String name,
+        int pkgFlags, boolean create) {
+    SharedUserSetting s = mSharedUsers.get(name);
+    if (s == null) {
+        // 不存在，尝试去创建
+        if (!create) {
+            return null;
+        }
+        s = new SharedUserSetting(name, pkgFlags);
+        // private static final boolean MULTIPLE_APPLICATION_UIDS = true;
+        if (MULTIPLE_APPLICATION_UIDS) {
+            // 创建一个新的 uid
+            s.userId = newUserIdLP(s);
+        } else {
+            /*
+                public static final int FIRST_APPLICATION_UID = 10000;
+                private static final int FIRST_APPLICATION_UID = Process.FIRST_APPLICATION_UID;
+            */
+            s.userId = FIRST_APPLICATION_UID;
+        }
+        Log.i(TAG, "New shared user " + name + ": id=" + s.userId);
+        // < 0 means we couldn't assign a userid; fall out and return
+        // s, which is currently null
+        if (s.userId >= 0) {
+            mSharedUsers.put(name, s);
+        }
+    }
+
+    return s;
+}
+```
+
+### Step12： Settings.getPackageLP
+
+这个函数在当前时机，基本就是直接返回了，这里面核心的逻辑是在 Step6 的时候才会被直接触发。
+
+```java
+        private final HashMap<String, PackageSetting> mPackages =
+                new HashMap<String, PackageSetting>();
+        private PackageSetting getPackageLP(String name, PackageSetting origPackage,
+                String realName, SharedUserSetting sharedUser, File codePath, File resourcePath,
+                String nativeLibraryPathString, int vc, int pkgFlags, boolean create, boolean add) {
+            PackageSetting p = mPackages.get(name);
+            if (p != null) {
+                //...
+                // 理论上，在我现在的理解上，这个时机，这里不相等几乎是不可能的。
+                // why?
+                // 要么 mPackages 存放的是独立 用户 id 的应用，要么是来自于 mPendingPackages 转换过来的，它的 sharedUser 肯定是有的。
+                // 难道是因为解析 package.xml 的时候的 sharedUser 和 AndroidManifest.xml 中的不一样吗？
+                if (p.sharedUser != sharedUser) {
+                    //...
+                    p = null;
+                } //...
+            }
+            // 什么时候这里会是 null 呢？ 还记得之前指定了 sharedUserID 的 package 会暂时被设置成 PendingPackage
+            // 并存储在 mPendingPackages 中，在解析完 shared-user 的信息后，会遍历这个 mPendingPackages
+            // 遍历的过程中，会调用这个 getPackageLP 方法 (Step6)。此时这个 p 就会是 null。
+            if (p == null) {
+                // Create a new PackageSettings entry. this can end up here because
+                // of code path mismatch or user id mismatch of an updated system partition
+                if (!create) {
+                    return null;
+                }
+                if (origPackage != null) {
+                    // We are consuming the data from an existing package.
+                    p = new PackageSetting(origPackage.name, name, codePath, resourcePath,
+                            nativeLibraryPathString, vc, pkgFlags);
+                    //...
+                    p.copyFrom(origPackage);
+                    //...
+                    p.sharedUser = origPackage.sharedUser;
+                    p.userId = origPackage.userId;
+                    p.origPackage = origPackage;
+                    //...
+                } else {
+                    p = new PackageSetting(name, realName, codePath, resourcePath,
+                            nativeLibraryPathString, vc, pkgFlags);
+                   //...
+                    p.sharedUser = sharedUser;
+                    if (sharedUser != null) {
+                        p.userId = sharedUser.userId;
+                    } else if (MULTIPLE_APPLICATION_UIDS) {
+                        // Clone the setting here for disabled system packages
+                        PackageSetting dis = mDisabledSysPackages.get(name);
+                        if (dis != null) {
+                            //...
+                            p.userId = dis.userId;
+                            //...
+                            addUserIdLP(p.userId, p, name);
+                        } else {
+                            // Assign new user id
+                            p.userId = newUserIdLP(p); // 分配新的用户 id
+                        }
+                    } else {
+                        p.userId = FIRST_APPLICATION_UID;
+                    }
+                }
+                //...
+                if (add) {
+                    // Finish adding new package by adding it and updating shared
+                    // user preferences
+                    addPackageSettingLP(p, name, sharedUser);
+                }
+            }
+            return p;
+        }
+```
+
+### Step13: Settings.newUserIdLP
+
+```java
+// 正如前面描述的，mUserIds 保存这所有的已经分配的 Linux 用户 ID。
+// 如果 id 已经分配了，那对应的 mUserIds[id] 不等于 null
+private final ArrayList<Object> mUserIds = new ArrayList<Object>();
+private int newUserIdLP(Object obj) {
+    // Let's be stupidly inefficient for now...
+    final int N = mUserIds.size();
+    for (int i=0; i<N; i++) {
+        if (mUserIds.get(i) == null) { // 找到一个不是 null 的，填充，返回。
+            mUserIds.set(i, obj);
+            return FIRST_APPLICATION_UID + i;
+        }
+    }
+
+    // None left?
+    if (N >= MAX_APPLICATION_UIDS) {
+        return -1;
+    }
+
+    mUserIds.add(obj);
+    return FIRST_APPLICATION_UID + N;
+}
+```
+
+### Step14: PackageManagerService.updatePermissionsLP
+
+> [PMS 设置的 uid 和 linux 如何同步呢?](android/framework/app_framework/ref/java_uid_and_linux_uid.md)
+
+在上面执行完成后，就成功的安装了一个应用程序，在所有的应用程序安装完成后，PMS 就要来为前面所安装的应用程序分配 Linux 用户组 ID 了，即授予它们所申请的资源访问权限。
+
+```java
+    private void updatePermissionsLP(String changingPkg,
+            PackageParser.Package pkgInfo, boolean grantPermissions,
+            boolean replace, boolean replaceAll) {
+        //...
+
+        // Now update the permissions for all packages, in particular
+        // replace the granted permissions of the system packages.
+        if (grantPermissions) {
+            // 遍历所有的存在 mPackages 中 pkg
+            for (PackageParser.Package pkg : mPackages.values()) {
+                if (pkg != pkgInfo) {
+                    grantPermissionsLP(pkg, replaceAll);
+                }
+            }
+        }
+        
+        //...
+    }
+```
+
+### Step15: PackageManagerService.grantPermissionsLP
+
+我们首先了解配置文件 AndroidManifest.xml 中的 uses-permission 标签和 Android 应用程序的 Linux 用户组 ID 的关系。
+
+假设一个应用程序需要使用照相设备，那么它就需要在它的配置文件 AndroidManifest.xml 中添加下面这一行信息：
+
+```xml
+<uses-permission android:name="android.permission.CAMERA"/>
+```
+
+从前面的可以知道，Package 管理服务 PackageManagerService 在解析这个配置文件时，会将这个 uses-permission 标签中的 android：name 属性的值“android.permission.CAMERA”取出来，并且保存在一个对应的 Package 对象的成员变量 requestedPermissions 所描述的一个资源访问权限列表中。
+
+Package 管理服务 PackageManagerService 在启动时，会调用 PackageManagerService 类的成员函数 readPermissions 来解析保存在设备上的/system/etc/permissions/platform.xml 文件中的内容。这个文件的内容是以 xml 格式保存的，里面包含了一系列的 permission 标签，用来描述系统中的资源访问权限列表，它们的格式如下所示。
+
+```xml
+<permission name="android.permission.CAMERA">
+    <group gid="camera" />
+</permission>
+```
+
+这个 permission 标签表示使用名称为“camera”的 Linux 用户组来描述名称为“android.permission.CAMERA”的资源访问权限。知道了一个 Linux 用户组的名称之后，我们就可以调用由 Linux 内核提供的函数 getgrnam 来获得对应的 Linux 用户组 ID，这样就可以将一个资源访问权限与一个 Linux 用户组 ID 关联起来。
+
+Package 管理服务 PackageManagerService 会为这个文件中的每一个 permission 标签创建一个 BasePermission 对象，并且以这个标签中的 name 属性值作为关键字，将这些 BasePermission 对象保存在 PackageManagerService 类的成员变量 mSettings 所指向的一个 Settings 对象的成员变量 mPermissions 所描述的一个 HashMap 中。由于一个 permission 标签可以包含多个 group 子标签，即一个资源访问权限名称可以用来描述多个 Linux 用户组，因此，每一个 BasePermission 对象内部都有一个 gids 数组，用来保存所有与它对应的 Linux 用户组 ID。
+
+在设备上的 /system/etc/permissions/platform.xml 文件中，还包含了一些全局的 group 标签。这些全局的 group 标签与 permission 标签是同一级的，用来描述系统中所有的应用程序默认都具有的资源访问权限。Package 管理服务 PackageManagerService 会将这些全局的 group 标签所描述的 Linux 用户组 ID 保存在 PackageManagerService 类的成员变量 mGlobalGids 所描述的一个数组中。
+
+
+```java
+    private void grantPermissionsLP(PackageParser.Package pkg, boolean replace) {
+        // 读取安装包设置信息
+        final PackageSetting ps = (PackageSetting)pkg.mExtras;
+        //...
+        // 是否要和其他应用共享同一个用户 ID
+        final GrantedPermissions gp = ps.sharedUser != null ? ps.sharedUser : ps;
+        //...
+
+        if (replace) {
+            //...
+            if (gp == ps) {
+                gp.grantedPermissions.clear();
+                gp.gids = mGlobalGids;
+            }
+        }
+        // 如果尚未分配用户组 id，那就用 global 的初始化
+        if (gp.gids == null) {
+            gp.gids = mGlobalGids;
+        }
+
+        final int N = pkg.requestedPermissions.size();
+        for (int i=0; i<N; i++) {
+            String name = pkg.requestedPermissions.get(i);
+            BasePermission bp = mSettings.mPermissions.get(name);
+            //...
+            if (bp != null && bp.packageSetting != null) {
+                final String perm = bp.name;
+                boolean allowed;
+                boolean allowedSig = false;
+                if (bp.protectionLevel == PermissionInfo.PROTECTION_NORMAL
+                        || bp.protectionLevel == PermissionInfo.PROTECTION_DANGEROUS) {
+                    allowed = true;
+                } else if (bp.packageSetting == null) {
+                    // This permission is invalid; skip it.
+                    allowed = false;
+                } else if (bp.protectionLevel == PermissionInfo.PROTECTION_SIGNATURE
+                        || bp.protectionLevel == PermissionInfo.PROTECTION_SIGNATURE_OR_SYSTEM) {
+                    allowed = (checkSignaturesLP(
+                            bp.packageSetting.signatures.mSignatures, pkg.mSignatures)
+                                    == PackageManager.SIGNATURE_MATCH)
+                            || (checkSignaturesLP(mPlatformPackage.mSignatures, pkg.mSignatures)
+                                    == PackageManager.SIGNATURE_MATCH);
+                    if (!allowed && bp.protectionLevel
+                            == PermissionInfo.PROTECTION_SIGNATURE_OR_SYSTEM) {
+                        if (isSystemApp(pkg)) {
+                            // For updated system applications, the signatureOrSystem permission
+                            // is granted only if it had been defined by the original application.
+                            if (isUpdatedSystemApp(pkg)) {
+                                PackageSetting sysPs = mSettings.getDisabledSystemPkg(
+                                        pkg.packageName);
+                                final GrantedPermissions origGp = sysPs.sharedUser != null
+                                        ? sysPs.sharedUser : sysPs;
+                                if (origGp.grantedPermissions.contains(perm)) {
+                                    allowed = true;
+                                } else {
+                                    allowed = false;
+                                }
+                            } else {
+                                allowed = true;
+                            }
+                        }
+                    }
+                    if (allowed) {
+                        allowedSig = true;
+                    }
+                } else {
+                    allowed = false;
+                }
+                if (false) {
+                    if (gp != ps) {
+                        Log.i(TAG, "Package " + pkg.packageName + " granting " + perm);
+                    }
+                }
+                if (allowed) {
+                    if ((ps.pkgFlags&ApplicationInfo.FLAG_SYSTEM) == 0
+                            && ps.permissionsFixed) {
+                        // If this is an existing, non-system package, then
+                        // we can't add any new permissions to it.
+                        if (!allowedSig && !gp.grantedPermissions.contains(perm)) {
+                            allowed = false;
+                            // Except...  if this is a permission that was added
+                            // to the platform (note: need to only do this when
+                            // updating the platform).
+                            final int NP = PackageParser.NEW_PERMISSIONS.length;
+                            for (int ip=0; ip<NP; ip++) {
+                                final PackageParser.NewPermissionInfo npi
+                                        = PackageParser.NEW_PERMISSIONS[ip];
+                                if (npi.name.equals(perm)
+                                        && pkg.applicationInfo.targetSdkVersion < npi.sdkVersion) {
+                                    allowed = true;
+                                    //...
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (allowed) {
+                        // 增加用户组权限
+                        if (!gp.grantedPermissions.contains(perm)) {
+                            //...
+                            gp.grantedPermissions.add(perm);
+                            gp.gids = appendInts(gp.gids, bp.gids);
+                        } else if (!ps.haveGids) {
+                            gp.gids = appendInts(gp.gids, bp.gids);
+                        }
+                    } else {
+                        //...
+                    }
+                } else {
+                    if (gp.grantedPermissions.remove(perm)) {
+                        //...
+                        gp.gids = removeInts(gp.gids, bp.gids);
+                        //...
+                    } else {
+                        //...
+                    }
+                }
+            } else {
+                //...
+            }
+        }
+
+        if ((changedPermission || replace) && !ps.permissionsFixed &&
+                ((ps.pkgFlags&ApplicationInfo.FLAG_SYSTEM) == 0) ||
+                ((ps.pkgFlags & ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0)){
+            // This is the first that we have heard about this package, so the
+            // permissions we have now selected are fixed until explicitly
+            // changed.
+            ps.permissionsFixed = true;
+        }
+        ps.haveGids = true;
+    }
+```
+
+### Step16: Settings.wirteLP
+
+不分析了，累了，这一步就是把刚才解析出来的信息写入到 package.xml 文件中，为的是下一次重新使用。
