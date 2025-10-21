@@ -2,6 +2,8 @@
 
 ## [Basic](android/app/basic/)
 
+## [Animation](android/app/animation/)
+
 ## [MVC](android/app/mvc/)
 
 ## [View: Measure,layout,draw](android/app/view-mld/)
