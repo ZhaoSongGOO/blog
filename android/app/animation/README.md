@@ -253,10 +253,188 @@ public void setAnimation(Animation animation) {
 
 ```
 
+## 帧动画
 
+帧动画本质是一个按照规定时间间隔自动切换的 Drawable 对象。
 
+### 类继承层次
 
+<img src="android/app/animation/resources/2.png" style="width:50%" >
 
+这个图里，黄色的是抽象类，红色的是接口。
 
+AnimationDrawable 实现了 Runnable 接口代表其可以作为一个 job 去执行。实现了 Animatable 接口，代表其可以被视为一个动画去执行。
 
+### 基础使用方式
 
+使用的基本方法就是我们将一个 AnimationDrawable 类型的资源设置为一个 View 的背景，随后对其调用 start 方法。
+
+```java
+var target = view.findViewById<View>(R.id.target)
+target.setBackgroundResource(R.drawable.anim_frame)
+val animationDrawable = target.background as AnimationDrawable
+animationDrawable.start()
+```
+
+### 源码分析
+
+我们首先来看 AnimationDrawable 类的 start 方法。
+
+```java
+public void start() {
+    mAnimating = true;
+
+    if (!isRunning()) {
+        // 在一个没有 running 的动画被 start 的时候，将会从它的第一帧开始播放。
+        // Start from 0th frame.
+        setFrame(0, false, mAnimationState.getChildCount() > 1
+                || !mAnimationState.mOneShot);
+    }
+}
+```
+
+然后我们看 `setFrame` 这个方法，这里传入三个参数，第一个 frame 代表设置的帧下标，unschedule 代表是不是停止动画，animate 代表是不是在播放当前帧后继续播放下一帧。
+
+```java
+private void setFrame(int frame, boolean unschedule, boolean animate) {
+    // 如果范围大于总的帧数了，那就返回
+    if (frame >= mAnimationState.getChildCount()) {
+        return;
+    }
+    mAnimating = animate;
+    mCurFrame = frame;
+    // 选择对应的帧对应的资源并进行展示
+    selectDrawable(frame);
+    // 如果指定需要取消之前的调度，或者还需要播放下一帧，那就先取消当前的调度
+    // 主要是为了避免多次的 schedule 带来混乱，所以需要把上一次的调度取消掉。
+    if (unschedule || animate) {
+        unscheduleSelf(this);
+    }
+    if (animate) {
+        // 如果需要调度下一帧，那就 scheduleSelf 一次，为得是下一帧可以在未来被触发。
+        // Unscheduling may have clobbered these values; restore them
+        mCurFrame = frame;
+        mRunning = true;
+        scheduleSelf(this, SystemClock.uptimeMillis() + mAnimationState.mDurations[frame]);
+    }
+}
+```
+
+我们先看 `selectDrawable` 方法的实现，这个方法来自于基类 DrawableContainer。
+
+```java
+public boolean selectDrawable(int index) {
+    if (index == mCurIndex) {
+        return false;
+    }
+    //...
+    // 如果设置了淡出
+    if (mDrawableContainerState.mExitFadeDuration > 0) {
+        // 这里面在计算淡出的时间等信息，暂时看不懂
+        if (mLastDrawable != null) {
+            mLastDrawable.setVisible(false, false);
+        }
+        if (mCurrDrawable != null) {
+            mLastDrawable = mCurrDrawable;
+            mLastIndex = mCurIndex;
+            mExitAnimationEnd = now + mDrawableContainerState.mExitFadeDuration;
+        } else {
+            mLastDrawable = null;
+            mLastIndex = -1;
+            mExitAnimationEnd = 0;
+        }
+    } else if (mCurrDrawable != null) {
+        // 没有设置淡出，就直接隐藏
+        mCurrDrawable.setVisible(false, false);
+    }
+
+    if (index >= 0 && index < mDrawableContainerState.mNumChildren) {
+        final Drawable d = mDrawableContainerState.getChild(index); // 获取新的一帧
+        mCurrDrawable = d;
+        //...
+    } else {
+        mCurrDrawable = null;
+        mCurIndex = -1;
+    }
+
+    //...
+    // 触发下一帧的重绘
+    invalidateSelf();
+
+    return true;
+}
+```
+
+然后我们看 unscheduleSelf 方法的实现，这个 callback 是啥，这里直接给出答案，callback 就是使用到这个 Drawable 资源的 View 组件。这点从 View 类的声明就可以看出来。 ```public class View implements Drawable.Callback```。
+
+```java
+public void unscheduleSelf(@NonNull Runnable what) {
+    final Callback callback = getCallback();
+    if (callback != null) {
+        // 调用到 View.unscheduleDrawable 方法。
+        callback.unscheduleDrawable(this, what);
+    }
+}
+
+// View.java
+public void unscheduleDrawable(@NonNull Drawable who, @NonNull Runnable what) {
+    if (verifyDrawable(who) && what != null) {
+        if (mAttachInfo != null) {
+            // 从 choregrpher 回调中移除
+            mAttachInfo.mViewRootImpl.mChoreographer.removeCallbacks(
+                    Choreographer.CALLBACK_ANIMATION, what, who);
+        }
+        // 从pending 队列中移除对应的 runnable
+        // 这里之所以两个队列都尝试移除，因为不知道之前 schedule 的时候，到底放到那个队列了，所以干脆都移除一次。
+        getRunQueue().removeCallbacks(what);
+    }
+}
+```
+
+同理我们看下 scheduleSelf 的实现，依然是触发 View.scheduleDrawable 方法。
+
+```java
+public void scheduleSelf(@NonNull Runnable what, long when) {
+    final Callback callback = getCallback();
+    if (callback != null) {
+        callback.scheduleDrawable(this, what, when);
+    }
+}
+// View.java
+public void scheduleDrawable(@NonNull Drawable who, @NonNull Runnable what, long when) {
+    if (verifyDrawable(who) && what != null) {
+        final long delay = when - SystemClock.uptimeMillis();
+        // 注册回调，会在下一次 vsync 到来的时候触发 AninmationDrawable 的 run 方法。
+        if (mAttachInfo != null) {
+            mAttachInfo.mViewRootImpl.mChoreographer.postCallbackDelayed(
+                    Choreographer.CALLBACK_ANIMATION, what, who,
+                    Choreographer.subtractFrameDelay(delay));
+        } else {
+            // Postpone the runnable until we know
+            // on which thread it needs to run.
+            getRunQueue().postDelayed(what, delay);
+        }
+    }
+}
+```
+
+然后我们再看下 AnimationDrawable 的 run 方法的实现。 可以看到就是计算下一帧的下标，然后再一次调用 setFrame 方法。
+
+```java
+public void run() {
+    nextFrame(false);
+}
+
+private void nextFrame(boolean unschedule) {
+    int nextFrame = mCurFrame + 1;
+    final int numFrames = mAnimationState.getChildCount();
+    final boolean isLastFrame = mAnimationState.mOneShot && nextFrame >= (numFrames - 1);
+
+    // Loop if necessary. One-shot animations should never hit this case.
+    if (!mAnimationState.mOneShot && nextFrame >= numFrames) {
+        nextFrame = 0;
+    }
+
+    setFrame(nextFrame, unschedule, !isLastFrame);
+}
+```
