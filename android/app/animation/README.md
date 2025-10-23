@@ -438,3 +438,305 @@ private void nextFrame(boolean unschedule) {
     setFrame(nextFrame, unschedule, !isLastFrame);
 }
 ```
+
+## 属性动画
+
+属性动画的本质是给每个对象的属性提供按照 VSync 的节奏进行更新的能力。
+
+### 类层次
+
+<img src="android/app/animation/resources/3.png" style="width:100%" >
+
+### 基础使用方式
+
+下面展示了一个属性动画的基本使用方式。
+
+```java
+Button animateBtn = xxx;
+
+// 针对于 Button 对象的 alpha 属性设置一个变化区间。
+val alphaAnimator = ObjectAnimator.ofFloat(animateBtn, "alpha", 1f, 0.5f, 1f)
+alphaAnimator.duration = 1000 // 动画时长1秒
+// 启动动画
+alphaAnimator.start()
+```
+
+### 源码分析
+
+首先我们看 ofFloat 方法，这个操作将会创建一个 ObjectAnimator 对象，并对属性以及属性变化区间进行记录。
+
+```java
+// ObjectAnimator.java
+public static ObjectAnimator ofFloat(Object target, String propertyName, float... values) {
+    ObjectAnimator anim = new ObjectAnimator(target, propertyName); // 创建一个 ObjectAnimator 实例
+    anim.setFloatValues(values);      // 设置属性值的变化序列
+    return anim;
+}
+
+private ObjectAnimator(Object target, String propertyName) {
+    setTarget(target);  // 设置属性变化的目标对象
+    setPropertyName(propertyName); // 设置需要变化的属性名称
+}
+
+public void setTarget(@Nullable Object target) {
+    //...
+        mTarget = target;
+        // New target should cause re-initialization prior to starting
+        mInitialized = false;
+    //...
+}
+
+/*
+mValues 是一个 PropertyValuesHolder[] 数组，存储所有需要进行变化的属性信息。在 ObjectAnimator 的场景下，其实只有一个值，
+因为 每一个 ObjectAnimator 只会对一个属性进行变化。所以这里也就是 mValues[0].
+
+如果我们是第一次创建，mValues 是 null，所以这个函数只是将 propertyName 记录在了 mPropertyName 中，没有做其他的事情。
+*/
+
+public void setPropertyName(@NonNull String propertyName) {
+    // mValues could be null if this is being constructed piecemeal. Just record the
+    // propertyName to be used later when setValues() is called if so.
+    // 第一次创建 ObjectAnimator 没有执行到。
+    if (mValues != null) {
+        PropertyValuesHolder valuesHolder = mValues[0];
+        String oldName = valuesHolder.getPropertyName();
+        valuesHolder.setPropertyName(propertyName);
+        mValuesMap.remove(oldName);
+        mValuesMap.put(propertyName, valuesHolder);
+    }
+    mPropertyName = propertyName;
+    // New property/values/target should cause re-initialization prior to starting
+    mInitialized = false;
+}
+
+// 然后我们看 setFloatValues。这个操作本质就是通过 mPropertyName 和 values 构造 PropertyValuesHolder 对象并保存在 mValues 中。
+
+public void setFloatValues(float... values) {
+    // 第一次 mValues 是 null
+    if (mValues == null || mValues.length == 0) {
+        // No values yet - this animator is being constructed piecemeal. Init the values with
+        // whatever the current propertyName is
+        if (mProperty != null) { // 不走这里
+            setValues(PropertyValuesHolder.ofFloat(mProperty, values));
+        } else {
+            // 调用基类的 setValues 方法
+            setValues(PropertyValuesHolder.ofFloat(mPropertyName, values));
+        }
+    } else {
+        super.setFloatValues(values);
+    }
+}
+
+// ValueAnimator.java
+public void setValues(PropertyValuesHolder... values) {
+    int numValues = values.length; // ObjectAnimator 场景下是 1
+    mValues = values;   // [PropertyValuesHolder], 一个元素的 list
+    mValuesMap = new HashMap<>(numValues);
+    for (int i = 0; i < numValues; ++i) {
+        PropertyValuesHolder valuesHolder = values[i];
+        mValuesMap.put(valuesHolder.getPropertyName(), valuesHolder);
+    }
+    // New property/values/target should cause re-initialization prior to starting
+    mInitialized = false;
+}
+```
+
+随后我们看 start 方法。
+
+```java
+// ObjectAnimator.java
+// 这个方法没有做太多事情，直接调用的基类的 start
+public void start() {
+    AnimationHandler.getInstance().autoCancelBasedOn(this);
+    //...
+    super.start();
+}
+
+// ValueAnimator.java
+public void start() {
+    start(false);
+}
+
+// ValueAnimator.java
+// 这里有较多的逻辑，我们只关注 addAnimationCallback 这个操作，这也是动画可以连续播放的核心操作
+private void start(boolean playBackwards) {
+    if (Looper.myLooper() == null) {
+        throw new AndroidRuntimeException("Animators may only be run on Looper threads");
+    }
+    mReversing = playBackwards;
+    //...
+    addAnimationCallback(0);
+
+    //...
+}
+// ValueAnimator.java
+// 因为每一个 Animator 都实现了 AnimationHandler.AnimationFrameCallback 接口，所以这里直接将自己注册到 AnimationHandler 中。
+private void addAnimationCallback(long delay) {
+    if (!mSelfPulse) {
+        return;
+    }
+    getAnimationHandler().addAnimationFrameCallback(this, delay);
+}
+```
+
+再进一步查看 addAnimationFrameCallback 逻辑前，我们看一下 AnimationHandler 的一个成员变量。
+
+```java
+// AnimationHandler.java
+// 这个变量是一个 Choreographer.FrameCallback, 可以注册到 Choreographer 中，随后会在 VSync 带来后由 Choreographer 触发。
+// 触发后，就执行里面的 doFrame 操作。
+    private final Choreographer.FrameCallback mFrameCallback = new Choreographer.FrameCallback() {
+        @Override
+        public void doFrame(long frameTimeNanos) {
+            doAnimationFrame(getProvider().getFrameTime());
+            if (mAnimationCallbacks.size() > 0) {
+                getProvider().postFrameCallback(this);
+            }
+        }
+    };
+```
+
+然后我们看 addAnimationFrameCallback 操作。
+
+```java
+// AnimationHandler.java
+public void addAnimationFrameCallback(final AnimationFrameCallback callback, long delay) {
+    // 如果是第一次注册 callback，那就给 Choreographer 中注册一下上面提到的 FrameCallback
+    if (mAnimationCallbacks.size() == 0) {
+        getProvider().postFrameCallback(mFrameCallback);
+    }
+    // 在 mAnimationCallbacks 进行保存。
+    if (!mAnimationCallbacks.contains(callback)) {
+        mAnimationCallbacks.add(callback);
+    }
+    //...
+}
+```
+
+到这里我们就 start 成功了，后面就等 VSync 到来后通过 mFrameCallback 的 doFrame 进一步执行了。
+
+我们继续看这里面的 doAnimationFrame 方法，在这个操作里面会遍历刚才注册的 AnimationFrameCallback，也就是 ObjectAnimator 本身，并执行他们的 doAnimationFrame 方法。
+
+```java
+// AnimationHandler.java
+private void doAnimationFrame(long frameTime) {
+    long currentTime = SystemClock.uptimeMillis();
+    final int size = mAnimationCallbacks.size();
+    for (int i = 0; i < size; i++) {
+        final AnimationFrameCallback callback = mAnimationCallbacks.get(i);
+        if (callback == null) {
+            continue;
+        }
+        if (isCallbackDue(callback, currentTime)) {
+            callback.doAnimationFrame(frameTime);
+            //...
+        }
+    }
+    cleanUpList();
+}
+```
+
+那我们再回去看看 doAnimationFrame 的内容。这个里面也是乱七八糟的一堆，但是核心逻辑就下面一行 animateBasedOnTime 按照当前时间执行对应的属性变化。animateBasedOnTime 中会依据传入的 currentTime 进一步计算一个 currentIterationFraction 值，交给 animateValue 进行属性最终值的计算。
+
+```java
+// ValueAnimator.java
+    public final boolean doAnimationFrame(long frameTime) {
+        //...
+        final long currentTime = Math.max(frameTime, mStartTime);
+        boolean finished = animateBasedOnTime(currentTime);
+
+        //...
+        return finished;
+    }
+
+    boolean animateBasedOnTime(long currentTime) {
+        boolean done = false;
+        if (mRunning) {
+            //...
+            mOverallFraction = clampFraction(fraction);
+            float currentIterationFraction = getCurrentIterationFraction(
+                    mOverallFraction, mReversing);
+            animateValue(currentIterationFraction);
+        }
+        return done;
+    }
+```
+
+到这里，我们得回去 ObjectAnimator 因为它重写了 animateValue 方法。我们可以看到很简单！就是遍历 PropertyValuesHolder[] 取出其中的每一个 PropertyValuesHolder 执行它的 setAnimatedValue 方法，传入的 target 就是我们需要变更属性的 object。也就是我们例子中提到的 Button。
+
+```java
+// ObjectAnimator.java
+    void animateValue(float fraction) {
+        final Object target = getTarget();
+        super.animateValue(fraction); // 这里调用基类的 animateValue 方法，去完成具体属性值的计算。
+        /*
+            void animateValue(float fraction) {
+                //...
+                if (mValues == null) {
+                    return;
+                }
+                // 通过差值器修正
+                fraction = mInterpolator.getInterpolation(fraction);
+                mCurrentFraction = fraction;
+                int numValues = mValues.length;
+                for (int i = 0; i < numValues; ++i) {
+                    // 使用 PropertyValuesHolder 进行计算
+                    mValues[i].calculateValue(fraction);
+                }
+                //...
+            }
+        */
+        int numValues = mValues.length;
+        for (int i = 0; i < numValues; ++i) {
+            mValues[i].setAnimatedValue(target);
+        }
+    }
+```
+
+然后我们进入到 PropertyValuesHolder (FloatPropertyValuesHolder) 中，看 setAnimatedValue 的实现。
+
+这个方法具体的内容就不说了，不管大概可以看得出来，或是调用对应对象的 set 方法进行设置，或者通过 jni 触发 c++，c++ 那边再进行属性设置。从而实现属性的变更。
+
+```java
+        void setAnimatedValue(Object target) {
+            if (mFloatProperty != null) {
+                mFloatProperty.setValue(target, mFloatAnimatedValue);
+                return;
+            }
+            if (mProperty != null) {
+                mProperty.set(target, mFloatAnimatedValue);
+                return;
+            }
+            if (mJniSetter != 0) {
+                nCallFloatMethod(target, mJniSetter, mFloatAnimatedValue);
+                return;
+            }
+            if (mSetter != null) {
+                try {
+                    mTmpValueArray[0] = mFloatAnimatedValue;
+                    mSetter.invoke(target, mTmpValueArray);
+                } catch (InvocationTargetException e) {
+                    Log.e("PropertyValuesHolder", e.toString());
+                } catch (IllegalAccessException e) {
+                    Log.e("PropertyValuesHolder", e.toString());
+                }
+            }
+        }
+```
+
+到这里，我们完成了一轮属性的变化以及更新，那下一轮变化如何触发呢? 这就要回到我们 `Choreographer.FrameCallback` 的 `doFrame` 方法中。
+
+```java
+    private final Choreographer.FrameCallback mFrameCallback = new Choreographer.FrameCallback() {
+        @Override
+        public void doFrame(long frameTimeNanos) {
+            doAnimationFrame(getProvider().getFrameTime());
+            // 如果还有 callback，(在之前的场景，我们的 ObjectAnimator 都没有把自己 remove 掉，所以这里 size 不为 0)
+            // 那就再次把自己添加到 Choreographer 的回调中，等待下一帧触发。
+            // 这里也有人会有疑问，为什么每次都需要添加，因为 Choreographer 中的回调是一次性调用，调用完就移除。
+            if (mAnimationCallbacks.size() > 0) {
+                getProvider().postFrameCallback(this);
+            }
+        }
+    };
+```
