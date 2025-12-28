@@ -1,6 +1,6 @@
 # Q1
 
-我可以这样理解吗，SurfaceControl 会和 sf 协商创建一个图层，我们可以通过这个 SurfaceControl 来控制图层的属性，同时会在这个图层创建一个 Surface，底层同于哦 Blast 创建生产者消费者通道，这个是用来应用使用 canvas 来给这个图层提供内容的
+我可以这样理解吗，SurfaceControl 会和 sf 协商创建一个图层，我们可以通过这个 SurfaceControl 来控制图层的属性，同时会在这个图层创建一个 Surface，底层等同于 Blast 创建生产者消费者通道，这个是应用用来使用 canvas 来给这个图层提供内容的
 
 ---
 
