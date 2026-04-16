@@ -8,8 +8,140 @@
   <meta name="description" content="Description">
   <meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
   <link rel="stylesheet" href="//unpkg.com/docsify/lib/themes/vue.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;600&display=swap" rel="stylesheet">
 </head>
 <body>
+  <style>
+  :root {
+    /* AoC 经典配色变量 */
+    --theme-color: #00cc00; /* 亮绿色 */
+    --base-background: #0f0f23;
+    --base-color: #cccccc;
+    --code-background: #10101a;
+    --highlight-color: #00cc00;
+  }
+
+  body {
+    background-color: var(--base-background);
+    color: var(--base-color);
+    font-family: "Source Code Pro", Monaco, "Courier New", monospace;
+  }
+
+  /* 侧边栏样式 */
+  .sidebar {
+    background-color: #0f0f23;
+    border-right: 1px solid #282c34;
+  }
+
+  .sidebar-nav li a {
+    color: var(--theme-color);
+  }
+
+  .sidebar-nav li a:hover {
+    text-decoration: underline;
+    color: var(--highlight-color);
+  }
+
+  /* 正文标题高亮 (AoC 标志性的发光效果) */
+  h1, h2, h3 {
+    color: var(--highlight-color);
+    text-shadow: 0 0 2px var(--highlight-color), 0 0 5px var(--highlight-color);
+  }
+
+  /* 代码块优化 */
+  code {
+    background-color: var(--code-background) !important;
+    color: #ffffff !important;
+  }
+
+  /* 链接样式 */
+  a {
+    color: var(--theme-color);
+    text-decoration: none;
+  }
+
+  a:hover {
+    color: var(--highlight-color);
+    text-shadow: 0 0 5px var(--highlight-color);
+  }
+
+  /* 针对 Docsify 搜索框的调整 */
+  .search input {
+    background: #10101a !important;
+    border: 1px solid var(--theme-color) !important;
+    color: var(--base-color) !important;
+  }
+  /* 1. 移除代码块容器的背景色和多余边距 */
+.markdown-section pre {
+  padding: 0 !important;
+  background-color: transparent !important;
+}
+
+/* 2. 针对 Prism.js 高亮插件生成的 code 标签进行修饰 */
+.markdown-section pre > code {
+  padding: 15px !important; /* 保持内部代码与边缘的距离 */
+  display: block;
+  background-color: #10101a !important; /* 确保背景色与你的 AoC 背景统一 */
+  border-radius: 4px;
+  /* 如果还有白边，强制重置 border */
+  border: none !important; 
+}
+
+/* 3. 针对 Docsify 某些主题自带的阴影或伪元素进行清理 */
+.markdown-section pre::before,
+.markdown-section pre::after {
+  display: none !important;
+}
+
+/* 1. 给代码块容器添加白色阴影 */
+.markdown-section pre {
+  /* 基础内边距，确保阴影不贴在代码上 */
+  padding: 1rem;
+  /* 统一代码块背景色 (建议使用深色，与阴影形成对比) */
+  background-color: #1a1a2e !important; 
+  border-radius: 8px; /* 加点圆角更好看 */
+  
+  /* --- 核心：白色阴影 --- */
+  /* x偏移 y偏移 模糊距离 阴影颜色 */
+  box-shadow: 0 4px 15px rgba(255, 255, 255, 0.4); 
+  
+  /* 如果你想让它有“发光”感，可以用下面这个多重阴影 (二选一) */
+  /* box-shadow: 0 0 5px rgba(255, 255, 255, 0.8), 0 0 15px rgba(255, 255, 255, 0.4); */
+
+  /* 移除之前可能导致“白边”的多余边框 */
+  border: none !important;
+  margin: 1.5rem 0; /* 给上下留点空间 */
+}
+
+/* 2. 优化内部代码样式 (确保不被阴影影响) */
+.markdown-section pre > code {
+  padding: 0 !important;
+  background-color: transparent !important;
+  display: block;
+}
+
+/* 3. (可选) 增加一个悬停时的交互效果 */
+.markdown-section pre:hover {
+  box-shadow: 0 6px 20px rgba(255, 255, 255, 0.6);
+  transition: box-shadow 0.3s ease;
+}
+
+/* 针对代码块容器内的字体设置 */
+.markdown-section pre code, 
+.markdown-section code {
+  font-family: 'Source Code Pro', Monaco, 'Courier New', monospace !important;
+  font-size: 0.95rem; /* 微调字体大小 */
+  line-height: 1.6;   /* 增加行高，让代码不拥挤 */
+  -webkit-font-smoothing: antialiased; /* 在 Mac/移动端让字体更平滑 */
+}
+
+/* 如果你使用了语法高亮插件，也需要确保高亮的 span 标签继承该字体 */
+.token {
+  font-family: 'Source Code Pro', monospace !important;
+}
+</style>
   <div id="app">loading</div>
   <script>
     window.$docsify = {
