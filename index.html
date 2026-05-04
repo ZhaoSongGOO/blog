@@ -57,14 +57,25 @@
   }
 
   /* 链接样式 */
-  a {
-    color: var(--theme-color);
-    text-decoration: none;
+  /* 统一标题样式：颜色、发光效果与链接对齐 */
+  h1, h2, h3 {
+    color: var(--theme-color) !important; /* 强制使用亮绿色变量 */
+    /* 调整发光效果：降低模糊度，使其看起来颜色更实，更接近链接的视觉感受 */
+    text-shadow: 0 0 1px var(--theme-color); 
+    font-weight: bold;
   }
 
-  a:hover {
-    color: var(--highlight-color);
-    text-shadow: 0 0 5px var(--highlight-color);
+  /* 统一链接样式 */
+  a {
+    color: var(--theme-color) !important;
+    text-decoration: none;
+    transition: all 0.3s ease;
+  }
+
+  /* 悬停时：标题和链接可以保持一致的高亮感 */
+  a:hover, h1:hover, h2:hover, h3:hover {
+    color: var(--highlight-color) !important;
+    text-shadow: 0 0 8px var(--highlight-color);
   }
 
   /* 针对 Docsify 搜索框的调整 */
@@ -74,10 +85,10 @@
     color: var(--base-color) !important;
   }
   /* 1. 移除代码块容器的背景色和多余边距 */
-.markdown-section pre {
-  padding: 0 !important;
-  background-color: transparent !important;
-}
+  .markdown-section a {
+    color: var(--theme-color);
+    font-weight: 500; /* 让链接稍微厚一点，视觉上更接近标题 */
+  }
 
 /* 2. 针对 Prism.js 高亮插件生成的 code 标签进行修饰 */
 .markdown-section pre > code {
